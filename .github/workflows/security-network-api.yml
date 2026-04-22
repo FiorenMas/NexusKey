@@ -1,0 +1,48 @@
+name: Security - Network API Guard
+
+on:
+  workflow_call:
+    secrets:
+      check_network:
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network-api-allowlist:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Restore secret
+        shell: pwsh
+        env:
+          CHECK_NETWORK_B64: ${{ secrets.check_network }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CHECK_NETWORK_B64)) {
+            throw "GitHub secret 'check_network' is empty or missing."
+          }
+
+          $target = 'tools/check_network_apis.ps1'
+          $dir = Split-Path -Path $target -Parent
+          if (-not [string]::IsNullOrWhiteSpace($dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          }
+
+          $bytes = [Convert]::FromBase64String($env:CHECK_NETWORK_B64)
+          [System.IO.File]::WriteAllBytes($target, $bytes)
+          Write-Host "Restored $target from secret."
+
+      - name: Self-test checker (fixtures)
+        shell: pwsh
+        run: ./tools/check_network_apis.ps1 -RunSelfTests
+
+      - name: Check network API allowlist
+        shell: pwsh
+        run: ./tools/check_network_apis.ps1

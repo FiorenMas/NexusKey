@@ -1,0 +1,116 @@
+name: Self Build Classic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  security-network-api:
+    uses: ./.github/workflows/security-network-api.yml
+    secrets: inherit
+
+  build-classic-release:
+    needs: security-network-api
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get latest upstream release metadata
+        id: upstream
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $candidateRepos = @(
+            'phatMT97/NexusKey'
+          )
+
+          $headers = @{
+            'Accept' = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+            'User-Agent' = 'github-actions-self-build'
+          }
+
+          $release = $null
+          $selectedRepo = ''
+          $errors = New-Object System.Collections.Generic.List[string]
+
+          foreach ($repo in $candidateRepos) {
+            $apiUrl = "https://api.github.com/repos/$repo/releases/latest"
+            try {
+              $resp = Invoke-WebRequest -Uri $apiUrl -Headers $headers -Method Get -ErrorAction Stop
+              $obj = $resp.Content | ConvertFrom-Json
+              if ($null -ne $obj -and -not [string]::IsNullOrWhiteSpace($obj.tag_name)) {
+                $release = $obj
+                $selectedRepo = $repo
+                break
+              }
+              $errors.Add("${repo}: latest release payload missing tag_name")
+            } catch {
+              $statusCode = ''
+              try { $statusCode = [string]$_.Exception.Response.StatusCode.value__ } catch {}
+              if ($statusCode -eq '404') {
+                $errors.Add("${repo}: 404 Not Found")
+                continue
+              }
+              $errors.Add("${repo}: $($_.Exception.Message)")
+            }
+          }
+
+          if ($null -eq $release) {
+            throw ("Could not resolve latest upstream release from candidates: " + ($errors -join ' | '))
+          }
+
+          $tag = $release.tag_name.Trim()
+          $title = if ([string]::IsNullOrWhiteSpace($release.name)) { $tag } else { $release.name.Trim() }
+          $body = if ($null -eq $release.body) { '' } else { [string]$release.body }
+
+          $bodyPath = Join-Path $env:RUNNER_TEMP 'upstream_release_body.md'
+          Set-Content -LiteralPath $bodyPath -Value $body -Encoding UTF8
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "title<<EOF" >> $env:GITHUB_OUTPUT
+          "$title" >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+          "body_path=$bodyPath" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Using upstream repository: $selectedRepo"
+          Write-Host "Using upstream tag: $tag"
+          Write-Host "Using upstream title: $title"
+
+      - name: Configure Classic UI
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set VSINSTALL=%%i
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64
+          cmake -B build-classic -G "Visual Studio 17 2022" -A x64 -DNEXUSKEY_LITE_MODE=ON
+
+      - name: Build Classic UI
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set VSINSTALL=%%i
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64
+          cmake --build build-classic --config Release --target NextKeyLite
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@4dd30955cca228da305ffee6fbc3fc1f95d447c2
+        with:
+          tag_name: ${{ steps.upstream.outputs.tag }}
+          name: ${{ steps.upstream.outputs.title }}
+          body_path: ${{ steps.upstream.outputs.body_path }}
+          files: |
+            build-classic/Release/NexusKeyClassic.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
