@@ -41,6 +41,43 @@ function initializeSwitchKeyDisplay() {
 }
 
 // ============================================
+// RESTART BANNER - Called from C++
+// ============================================
+// showUpdateBanner(state) — state: 0=hide, 1=pending copy, 2=mismatch copy.
+// Triggered by SettingsDialog::initializeUI() after reading SharedState flags.
+function showUpdateBanner(state) {
+    var banner = document.getElementById("update-banner");
+    if (!banner) return;
+
+    if (state === 0) {
+        banner.style.display = "none";
+        return;
+    }
+
+    var msgKey = (state === 1) ? "update.banner.pending" : "update.banner.mismatch";
+    var text = document.getElementById("update-banner-text");
+    var btnRestart = document.getElementById("update-banner-restart");
+    var btnLater = document.getElementById("update-banner-later");
+
+    if (text) text.textContent = (typeof t === "function") ? t(msgKey)
+                                                            : "Restart Windows to finish update.";
+    if (btnRestart) btnRestart.textContent = (typeof t === "function")
+        ? t("update.banner.restartNow") : "Restart now";
+    if (btnLater) btnLater.textContent = (typeof t === "function")
+        ? t("update.banner.later") : "Later";
+
+    banner.style.display = "";
+
+    if (btnRestart) btnRestart.onclick = function () {
+        Window.this.requestRestartWindows();
+    };
+    if (btnLater) btnLater.onclick = function () {
+        banner.style.display = "none";
+        // Do not persist — banner re-appears on next dialog open (design §4).
+    };
+}
+
+// ============================================
 // THEME MANAGEMENT - Called from C++
 // ============================================
 // setTheme(isDark) - Called from C++ to apply dark/light theme

@@ -57,6 +57,7 @@ public:
     void onExpandChange(bool expanded);
     void onToggleChange(sciter::string id, bool checked);  // Direct toggle → C++ (bypasses DOM events)
     void onClose();
+    void requestRestartWindows();  // Restart-banner button → ExitWindowsEx
 
     // SOM passport for JavaScript binding
     SOM_PASSPORT_BEGIN(SettingsDialog)
@@ -65,7 +66,8 @@ public:
             SOM_FUNC(onSpellCheckChange),
             SOM_FUNC(onExpandChange),
             SOM_FUNC(onToggleChange),
-            SOM_FUNC(onClose)
+            SOM_FUNC(onClose),
+            SOM_FUNC(requestRestartWindows)
         )
     SOM_PASSPORT_END
 

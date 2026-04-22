@@ -5,6 +5,7 @@
 #include "DialogUtils.h"
 #include "core/config/ConfigManager.h"
 #include "helpers/AppHelpers.h"
+#include "core/Strings.h"
 #include "core/WinStrings.h"
 #include "sciter-x-dom.hpp"
 #include <algorithm>

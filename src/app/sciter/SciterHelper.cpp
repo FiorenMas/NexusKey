@@ -73,12 +73,11 @@ LRESULT handleWindowDrag(HWND hwnd, LPARAM lParam, int titleHeight, int buttonsW
     RECT clientRect{};
     GetClientRect(hwnd, &clientRect);
 
-    // Win10: .container has margin:12px + border:1px = 13px offset on all sides,
-    // pushing the title bar down and buttons inward. Extend drag zone to compensate.
+    // Win10: .container margin + border pushes title bar down and buttons inward.
+    // Extend drag zone to compensate.
     if (!DarkModeHelper::IsWindows11OrGreater()) {
-        constexpr int kWin10ContainerOffset = 13;  // margin(12) + border(1)
-        titleHeight += kWin10ContainerOffset;
-        buttonsWidth += kWin10ContainerOffset;
+        titleHeight += Win10Frame::FRAME_OFFSET;
+        buttonsWidth += Win10Frame::FRAME_OFFSET;
     }
 
     // Scale coordinates based on window DPI to fix drag zone at > 100% scale

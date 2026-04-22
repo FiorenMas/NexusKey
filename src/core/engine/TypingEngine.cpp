@@ -567,6 +567,14 @@ bool TypingEngine::ProcessTelexModifier(wchar_t c, wchar_t lower) {
                 }
                 return true;
             }
+            // Reject adjacent circumflex when the result is an invalid
+            // syllable — catches split tone/mod typos ("của" + 'a' → c,ủ,â)
+            // via SpellCheck's tone/mod invariant and structural invalidity
+            // ("hò" + 'a' + 'a' → h,ò,â with "âo" not in vowel table).
+            if (ShouldRejectModifier(states_.size() - 1,
+                                     Modifier::Circumflex, lower)) {
+                return false;  // Fall through to ProcessChar — add vowel literally
+            }
             // Apply circumflex - PRESERVE FIRST LETTER CASE
             last.mod = Modifier::Circumflex;
             return true;
@@ -618,23 +626,24 @@ bool TypingEngine::ProcessTelexModifier(wchar_t c, wchar_t lower) {
                         return true;
                     }
                     if (it->mod == Modifier::None) {
-                        // Spell check ON: validate via SpellChecker.
+                        // Spell check ON: validate the RESULT of applying circumflex.
+                        //   Rejects "vào" + 'a' → "vầo" (invalid syllable) while
+                        //   allowing "cau" + 'a' → "câu" and "chieu" + 'e' → "chiêu".
                         // Spell check OFF, cross-vowel + consonant: always reject.
-                        // Vietnamese circumflex never crosses diff-vowel + consonant
-                        // (dấu mũ ở SAU trong iê/uô → match trước needsValidation;
-                        //  dấu mũ ở TRƯỚC trong âu/ây/êu/ôi → không có coda).
-                        // Catches "readme" (e←a←dm←e) and "review" (e←v←i←e).
+                        //   Vietnamese circumflex never crosses diff-vowel + consonant
+                        //   (dấu mũ ở SAU trong iê/uô → match trước needsValidation;
+                        //    dấu mũ ở TRƯỚC trong âu/ây/êu/ôi → không có coda).
+                        //   Catches "readme" (e←a←dm←e) and "review" (e←v←i←e).
                         // Spell check OFF, same-vowel: reject if single consonant is not
-                        // a valid Vietnamese coda (c/m/n/p/t). Catches "release" (e→l→e)
-                        // while allowing "hiên" (e→n→e) and "tiêng" (e→ng→e).
+                        //   a valid Vietnamese coda (c/m/n/p/t). Catches "release" (e→l→e)
+                        //   while allowing "hiên" (e→n→e) and "tiêng" (e→ng→e).
                         if (needsValidation) {
-                            if (config_.spellCheckEnabled && SpellCheck::Validate(
-                                    states_.data(), states_.size(), config_.allowZwjf)
-                                    == SpellCheck::Result::Invalid) {
-                                it->mod = Modifier::None;
-                                break;
-                            }
-                            if (!config_.spellCheckEnabled && consonantsCrossed >= 1) {
+                            if (config_.spellCheckEnabled) {
+                                size_t targetIdx =
+                                    static_cast<size_t>(states_.rend() - it - 1);
+                                if (ShouldRejectModifier(targetIdx, Modifier::Circumflex, lower))
+                                    break;
+                            } else if (consonantsCrossed >= 1) {
                                 engProt_.bias = LanguageBias::HardEnglish;
                                 break;
                             }
@@ -1043,8 +1052,11 @@ void TypingEngine::RelocateToneToHornVowel() {
 
     if (hornIdx != SIZE_MAX && tonedIdx != SIZE_MAX && hornIdx != tonedIdx) {
         // Allow relocation from unmodified vowels and from horn vowels
-        // (handles "ươ" diphthong: tone moves from ư to ơ)
-        if (states_[tonedIdx].mod == Modifier::None || states_[tonedIdx].mod == Modifier::Horn) {
+        // (handles "ươ" diphthong: tone moves from ư to ơ). Must stay within
+        // the same syllable — never relocate across a consonant.
+        if ((states_[tonedIdx].mod == Modifier::None ||
+             states_[tonedIdx].mod == Modifier::Horn) &&
+            !HasConsonantBetween(states_.data(), tonedIdx, hornIdx)) {
             states_[hornIdx].tone = states_[tonedIdx].tone;
             states_[tonedIdx].tone = Tone::None;
         }
@@ -1057,18 +1069,17 @@ void TypingEngine::RelocateToneToHornVowel() {
 
 void TypingEngine::RelocateToneToTarget() {
     // Find where the tone currently is
-    size_t tonedIdx = SIZE_MAX;
-    for (size_t i = 0; i < states_.size(); ++i) {
-        if (states_[i].IsVowel() && states_[i].tone != Tone::None) {
-            tonedIdx = i;
-            break;
-        }
-    }
+    size_t tonedIdx = FindTonedVowelIndex(states_.data(), states_.size());
     if (tonedIdx == SIZE_MAX) return;
 
     // Find where the tone should be now (modifier may have changed priority)
     size_t targetIdx = FindToneTarget();
     if (targetIdx == SIZE_MAX || targetIdx == tonedIdx) return;
+
+    // Never relocate across a consonant — Vietnamese syllables keep all
+    // vowels contiguous, so a consonant between tonedIdx and targetIdx
+    // means they belong to different syllables.
+    if (HasConsonantBetween(states_.data(), tonedIdx, targetIdx)) return;
 
     if (IsToneRelocBlockedByP4(states_.data(), states_.size(), targetIdx, config_.modernOrtho))
         return;
@@ -1484,11 +1495,17 @@ bool TypingEngine::ProcessVniVowelModifier(Modifier targetMod, wchar_t key) {
         }
     };
 
-    // Pass 1: rightmost unmodified eligible vowel → apply
+    // Pass 1: rightmost unmodified eligible vowel → apply.
+    // Reject when the result would be an invalid syllable — catches both
+    // split tone/mod ("của" + '6' → c,ủ,â) and structural invalidity
+    // ("báo" + '6' → b,a,ô with "aô" not in vowel table). Do NOT fall back
+    // to an earlier vowel; split applications on earlier vowels would still
+    // be invalid.
     for (size_t i = states_.size(); i-- > 0;) {
         if (!states_[i].IsVowel() || !isEligible(states_[i].base)) continue;
         if (IsClusterConsonant(states_.data(), states_.size(), i)) continue;
         if (states_[i].mod == Modifier::None) {
+            if (ShouldRejectModifier(i, targetMod, key)) return false;
             states_[i].mod = targetMod;
             RelocateToneToTarget();
             return true;
@@ -1544,6 +1561,13 @@ bool TypingEngine::ProcessVniVowelModifier(Modifier targetMod, wchar_t key) {
 void TypingEngine::UpdateSpellState() {
     UpdateSpellCheck(states_.data(), states_.size(), config_, spellCheckDisabled_,
                      [](const CharState& s) { return Compose(s); });
+}
+
+bool TypingEngine::ShouldRejectModifier(size_t targetIdx, Modifier newMod,
+                                        wchar_t key) {
+    if (!config_.spellCheckEnabled) return false;
+    return !WouldBeValidSyllable(targetIdx, newMod) &&
+           !WouldModifierKeyMatchExclusion(key);
 }
 
 bool TypingEngine::WouldBeValidSyllable(size_t targetIdx, Modifier newMod,

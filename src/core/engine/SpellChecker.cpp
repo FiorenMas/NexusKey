@@ -764,6 +764,32 @@ Result ValidateImpl(const CharStateT* states, size_t count, bool allowZwjf = fal
     return result;
 }
 
+// Tone/modifier same-vowel invariant: valid Vietnamese syllables place the
+// tone mark on the vowel that carries the modifier (or on the canonical tone
+// target when no vowel is modified). If ANY vowel in the buffer has a
+// modifier, the tone MUST sit on a modified vowel. Also rejects buffers
+// carrying more than one tone, which valid syllables never do.
+// Catches typos like "của" + circumflex on 'a' → c,ủ,â (split tone/mod)
+// that the structural nucleus lookup would otherwise accept because "uâ"
+// itself is a legal vowel combo (chuẩn, tuấn, luật).
+template<typename CharStateT>
+bool CheckToneModInvariant(const CharStateT* states, size_t count) noexcept {
+    bool anyMod = false;
+    size_t toneIdx = SIZE_MAX;
+    for (size_t i = 0; i < count; ++i) {
+        if (!states[i].IsVowel()) continue;
+        if (states[i].HasModifier()) anyMod = true;
+        if (states[i].HasTone()) {
+            if (toneIdx != SIZE_MAX) return false;  // multiple tones
+            toneIdx = i;
+        }
+    }
+    if (toneIdx != SIZE_MAX && anyMod && !states[toneIdx].HasModifier()) {
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 //=============================================================================
@@ -772,7 +798,11 @@ Result ValidateImpl(const CharStateT* states, size_t count, bool allowZwjf = fal
 
 template<typename CharStateT>
 Result Validate(const CharStateT* states, size_t count, bool allowZwjf) noexcept {
-    return ValidateImpl(states, count, allowZwjf);
+    Result r = ValidateImpl(states, count, allowZwjf);
+    if (r != Result::Invalid && !CheckToneModInvariant(states, count)) {
+        r = Result::Invalid;
+    }
+    return r;
 }
 
 // Explicit instantiation — single CharState type shared across Telex/VNI/Combined modes.

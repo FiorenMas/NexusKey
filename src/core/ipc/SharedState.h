@@ -17,6 +17,10 @@ namespace SharedFlags {
     constexpr uint32_t SPELL_CHECK     = 0x0004;
     constexpr uint32_t TSF_ACTIVE      = 0x0008;  // Foreground app uses TSF engine (hook sets, DLL reads)
     constexpr uint32_t TSF_READONLY    = 0x0010;  // Hook active, TSF sinks doc events + pushes contextAnchor
+    // Restart-banner triggers — set cross-process by main EXE / TSF DLL.
+    constexpr uint32_t TSF_ABI_MISMATCH       = 0x0020;  // DLL: mapped SharedState layout doesn't match this DLL
+    constexpr uint32_t TSF_PENDING_DLL_SWAP   = 0x0040;  // EXE: startup swap failed, reboot needed
+    constexpr uint32_t TSF_POST_UPDATE_REBOOT = 0x0080;  // EXE: swap succeeded, hosts may still hold old DLL
 }
 
 // Feature flag bit definitions (uint32_t packed into 3 bytes: featureFlags[2] + extFeatureFlags)
@@ -262,8 +266,10 @@ struct SharedState {
     uint8_t  configGeneration;   // Wraps at 255 — use != comparison, not >
     uint8_t  reserved0;          // Padding to maintain alignment
 
-    // ── Reserved for future expansion (21 bytes) ──
-    uint8_t  reserved[21];
+    // ── Reserved for future expansion (1024 bytes) ──
+    // Draw from this pool for new fields; do NOT bump CURRENT_VERSION unless
+    // resizing/reordering existing fields. See docs/CODING_RULES/5-struct-versioning.md.
+    uint8_t  reserved[1024];
 
     // ── Readonly context anchor (44 bytes, v3+) ──
     // Written by TSF DLL in readonly mode; read by HookEngine.
@@ -271,7 +277,7 @@ struct SharedState {
     HookContextAnchor contextAnchor;
 
     static constexpr uint32_t MAGIC_VALUE = 0x59454B4E;    // 'NKEY'
-    static constexpr uint32_t CURRENT_VERSION = 3;          // v3: added contextAnchor (phase 1 TSF readonly)
+    static constexpr uint32_t CURRENT_VERSION = 4;          // v4: reserved pool grown to 1024 (hybrid DLL update headroom)
 
     [[nodiscard]] bool IsValid() const noexcept {
         return magic == MAGIC_VALUE
@@ -331,8 +337,34 @@ struct SharedState {
     }
 };
 
-// Ensure SharedState layout is stable across EXE and DLL builds
-static_assert(sizeof(SharedState) == 100, "SharedState size changed — update structVersion");
+// Ensure SharedState layout is stable across EXE and DLL builds.
+// sizeof breakdown: 12 header + 4 epoch + 4 flags + 3 config + 3 featureFlags +
+// 1 codeTable + 6 hotkey + 2 configGen/reserved0 + 1024 reserved
+//   = 1059 bytes, rounded up by 1 byte of alignment padding before contextAnchor
+//   (alignof >= 4) → contextAnchor at offset 1060 + 44 = 1104.
+static_assert(sizeof(SharedState) == 1104, "SharedState size changed — update structVersion");
+
+// Layout-freeze guards — failing any of these means a field was reordered or
+// resized and CURRENT_VERSION MUST be bumped (DLLs built against the old
+// layout will then hit IsValid() == false and enter passthrough).
+static_assert(offsetof(SharedState, magic) == 0,
+              "magic must stay at offset 0");
+static_assert(offsetof(SharedState, structVersion) == 4,
+              "structVersion offset frozen");
+static_assert(offsetof(SharedState, structSize) == 8,
+              "structSize offset frozen");
+static_assert(offsetof(SharedState, epoch) == 12,
+              "epoch offset frozen");
+static_assert(offsetof(SharedState, flags) == 16,
+              "flags offset frozen");
+static_assert(offsetof(SharedState, configGeneration) == 33,
+              "configGeneration offset frozen");
+// contextAnchor offset moves with reserved[] size. Pin it so any accidental
+// field insert/reorder upstream gets caught at compile time. Accounts for
+// 1 byte of alignment padding after reserved[1024] (ends at 1059, anchor
+// requires alignof >= 4 so lands at 1060).
+static_assert(offsetof(SharedState, contextAnchor) == 1060,
+              "contextAnchor offset frozen (must account for reserved[1024] + pad)");
 
 /// Encode TypingConfig feature bools → uint32_t bitmask (3 bytes used)
 [[nodiscard]] inline uint32_t EncodeFeatureFlags(const TypingConfig& config) noexcept {

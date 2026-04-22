@@ -51,6 +51,18 @@ namespace TitleBarDefaults {
     constexpr int BUTTONS_WIDTH = 80;
 }
 
+/// Win10 CSS frame geometry.
+/// `.container` on Win10 (see shared/theme.css) adds `margin: 12px` + `border: 1px`
+/// to define the window edge (Win11 uses DWMWCP_ROUND instead). Window-sizing
+/// code must compensate so the HWND covers the shadow+border; drag-zone code
+/// must shift to skip the margin. One definition here — don't re-hardcode.
+namespace Win10Frame {
+    constexpr int CSS_MARGIN = 12;   // .container margin on each side
+    constexpr int CSS_BORDER = 1;    // .container 1px border
+    constexpr int FRAME_OFFSET = CSS_MARGIN + CSS_BORDER;   // margin + border (per side)
+    constexpr int FRAME_SIZE_ADD = 2 * CSS_MARGIN;          // width/height padding total
+}
+
 namespace SciterHelper {
 
     /**

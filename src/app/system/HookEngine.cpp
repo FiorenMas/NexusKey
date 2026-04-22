@@ -365,6 +365,10 @@ bool HookEngine::CheckConfigEvent() {
     return true;
 }
 
+void HookEngine::SyncConfigFromSharedState() {
+    QuickSyncFromSharedState();
+}
+
 void HookEngine::ReloadFromToml() {
     NEXTKEY_LOG(L"HookEngine: full TOML reload");
 
@@ -1637,21 +1641,22 @@ bool HookEngine::TryEditMessagePaste(const std::wstring& text, size_t backspaceC
     // Re-enable + InvalidateRect at the end to paint the final text once.
     // erase=FALSE: text controls paint their own background in WM_PAINT — TRUE would
     // cause a brief background-color flash before the text redraws on top.
-    // Edge case: if WM_SETREDRAW TRUE times out after FALSE succeeded, the control
-    // stays in no-redraw state until its thread un-hangs. Rare (target must hang
-    // mid-sequence) but worth noting.
-    bool redrawSuppressed = (backspaceCount > 0);
-    if (redrawSuppressed) {
-        SendMessageTimeoutW(hwnd, WM_SETREDRAW, FALSE, 0,
-                            kFlags, kEditMsgTimeoutMs, &dummy);
+    // Only re-enable if suppression actually took effect; if the FALSE send timed out
+    // the control never entered no-redraw state, so skip the (redundant) TRUE send.
+    bool redrawSuppressed = false;
+    if (backspaceCount > 0) {
+        redrawSuppressed = SendMessageTimeoutW(hwnd, WM_SETREDRAW, FALSE, 0,
+                                               kFlags, kEditMsgTimeoutMs, &dummy) != 0;
         if (!SendMessageTimeoutW(hwnd, EM_SETSEL,
                                  static_cast<WPARAM>(newStart),
                                  static_cast<LPARAM>(selEnd),
                                  kFlags, kEditMsgTimeoutMs, &dummy)) {
             HOOK_LOG(L"  EditMsgPaste: EM_SETSEL timed out (class='%s')", cls);
-            SendMessageTimeoutW(hwnd, WM_SETREDRAW, TRUE, 0,
-                                kFlags, kEditMsgTimeoutMs, &dummy);
-            InvalidateRect(hwnd, nullptr, FALSE);
+            if (redrawSuppressed) {
+                SendMessageTimeoutW(hwnd, WM_SETREDRAW, TRUE, 0,
+                                    kFlags, kEditMsgTimeoutMs, &dummy);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             return false;
         }
     }
@@ -2128,8 +2133,14 @@ void HookEngine::OnFocusChanged(HWND triggerHwnd) {
                 // transform instead of per BS + per char.
                 useEditMsgPath_ = true;
             } else {
-                isOutlookApp_ = exeName.find(L"outlook") != std::wstring::npos;
-                needBaitChar_ = exeName.find(L"excel") != std::wstring::npos || isOutlookApp_;
+                // Outlook 2016 RichEdit has two orthogonal quirks, both derived from
+                // the same detection: (1) needs a U+202F bait char before BS (same
+                // as Excel), (2) drops the trailing char of a word when physical
+                // Shift+letter precedes other chars — passthrough must be disabled
+                // (issue #97). Single exe scan; both flags fall out.
+                const bool isOutlook = exeName.find(L"outlook") != std::wstring::npos;
+                isOutlookApp_ = isOutlook;
+                needBaitChar_ = exeName.find(L"excel") != std::wstring::npos || isOutlook;
             }
         }
     }

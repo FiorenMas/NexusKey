@@ -24,6 +24,7 @@
 #include "system/StartupHelper.h"
 #include "system/UpdateChecker.h"
 #include "system/UpdateInstaller.h"
+#include "system/PendingDllApply.h"
 #include "system/ToastPopup.h"
 #include "helpers/AppHelpers.h"
 
@@ -267,6 +268,10 @@ static void OnMenuCommand(TrayMenuId id) {
             PostQuitMessage(0);
             break;
 
+        case TrayMenuId::RestartWindows:
+            RestartWindowsWithPrompt(g_trayIcon.GetMessageWindow());
+            break;
+
         default: {
             // Code table menu items (1010-1014)
             auto rawId = static_cast<UINT>(id);
@@ -379,6 +384,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     auto systemConfig = ConfigManager::LoadSystemConfigOrDefault();
     SetLanguage(static_cast<Language>(systemConfig.language));
 
+    // Apply any deferred TSF DLL swap before CleanupOldUpdateFiles removes
+    // _old_version/ (the parking dir used by ApplyPendingDllUpdate).
+    PendingDllState pendingDllState = ApplyPendingDllUpdate();
+
     // Clean up leftover update files
     bool updateJustCompleted = CleanupOldUpdateFiles();
     if (updateJustCompleted) {
@@ -424,6 +433,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         }
         g_sharedState.Write(state);
         NEXTKEY_LOG(L"SharedState created for Lite mode");
+
+        // Publish the startup DLL-swap outcome ONLY if TSF is registered —
+        // users who haven't opted into TSF (or toggled it off) don't care
+        // about DLL-host sync and shouldn't be nagged to reboot.
+        const bool tsfInUse = IsTsfRegistered();
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_PENDING_DLL_SWAP,
+            tsfInUse && pendingDllState == PendingDllState::SwapFailed);
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_POST_UPDATE_REBOOT,
+            tsfInUse && pendingDllState == PendingDllState::SwapDoneNeedsReboot);
     }
 
     // ── Tray Icon ──
@@ -435,6 +453,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         return 1;
     }
     g_trayIcon.SetMenuCallback(OnMenuCommand);
+    g_trayIcon.SetSharedState(&g_sharedState);  // for TSF-update restart menu item
 
     // Wire mode change callback: HookEngine -> tray icon + SharedState + floating icon
     g_hookEngine.SetModeChangeCallback([](bool vietnamese) {
@@ -459,6 +478,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         if (g_hookEngine.IsVietnameseMode() != vietnamese) {
             g_hookEngine.ToggleVietnameseMode();
         }
+    });
+
+    // Wire hook-reload callback: sub-dialog subprocess → main EXE eager sync.
+    // Without this, new lists (TSF apps, excluded apps, macros, …) only apply
+    // on the next keystroke / focus change in the target app.
+    g_trayIcon.SetHookReloadCallback([]() {
+        g_hookEngine.SyncConfigFromSharedState();
     });
 
     // Wire menu state getter

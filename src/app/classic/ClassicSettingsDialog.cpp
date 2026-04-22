@@ -15,6 +15,7 @@
 #include "core/Version.h"
 #include "system/StartupHelper.h"
 #include "system/UpdateChecker.h"
+#include "system/PendingDllApply.h"
 #include "core/Strings.h"
 
 #include <thread>
@@ -103,6 +104,22 @@ bool ClassicSettingsDialog::Show(HINSTANCE hInstance, HWND parent) {
 
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
+
+    // Classic uses a one-shot confirm instead of an inline banner (Win32 tab
+    // layout makes an inline strip costly). User clicks OK → ExitWindowsEx;
+    // Cancel → continue with settings.
+    if (auto bannerState = GetUpdateBannerState(sharedState_);
+        bannerState != UpdateBannerState::Hide) {
+        const wchar_t* msg = (bannerState == UpdateBannerState::PendingSwap)
+            ? S(StringId::UPDATE_BANNER_PENDING)
+            : S(StringId::UPDATE_BANNER_MISMATCH);
+        // User already confirms reboot intent in THIS MessageBox; skip the
+        // second prompt in RestartWindowsWithPrompt — call the no-UI variant.
+        if (MessageBoxW(hwnd_, msg, L"NexusKey",
+                        MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) == IDOK) {
+            RestartWindowsNow();
+        }
+    }
 
     // Modal message loop
     MSG msg{};

@@ -27,6 +27,7 @@ constexpr UINT WM_NEXUSKEY_SHOW_SETTINGS = WM_USER + 110;   // Main: show settin
 constexpr UINT WM_NEXUSKEY_OPEN_APPOVERRIDES = WM_USER + 111; // Deferred: open app overrides dialog
 constexpr UINT WM_NEXUSKEY_OPEN_SPELLEXCL = WM_USER + 112;    // Deferred: open spell exclusions dialog
 constexpr UINT WM_NEXUSKEY_RESTART = WM_USER + 113;           // Settings → Main: restart app (admin mode changed)
+constexpr UINT WM_NEXUSKEY_HOOK_RELOAD = WM_USER + 114;       // Subprocess → Main: eager hook reload after SignalConfigChange
 
 }  // namespace NextKey
 

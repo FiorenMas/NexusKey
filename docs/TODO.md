@@ -5,6 +5,46 @@
 
 ---
 
+## Sub-dialog Instant Apply — Fixed (2026-04-22)
+
+User feedback (v2.1.21): adding an app to TSF list required closing Settings before
+the new entry took effect; target app stayed in Hook mode until its next focus gain.
+
+### Root cause
+`SignalConfigChange()` only bumps `configGeneration` in SharedState; main EXE's
+`HookEngine::QuickSyncFromSharedState()` is called from `ProcessKeyDown` /
+`OnFocusChanged` only — no periodic poll (the 100 ms `ConfigPollTimerProc` was
+removed in commit `fcfd9c4` when the Named-Event → generation migration landed).
+While Settings owns foreground, the target app can't fire `OnFocusChanged` → reload
+is deferred until Settings closes.
+
+### Fix — landed
+Added `WM_NEXUSKEY_HOOK_RELOAD` cross-process ping from `SignalConfigChange()` to
+the main EXE tray window. Tray forwards to a `SetHookReloadCallback` handler wired
+to a new public `HookEngine::SyncConfigFromSharedState()` (thin wrapper around the
+private `QuickSyncFromSharedState` so we don't touch the auto-reset Named Event,
+which is reserved for the TSF DLL — consuming it in the main EXE would steal the
+signal from `EngineController::CheckConfigEvent`).
+
+Applies to every sub-dialog that calls `SignalConfigChange`: TsfApps, ExcludedApps,
+AppOverrides, MacroTable, SpellExclusions, ConvertTool.
+
+### Tech-debt items surfaced
+- [ ] **`FindWindowW(L"NexusKeyTrayClass") + PostMessageW` pattern duplicated**
+  Now in `AppHelpers.h::SignalConfigChange`, `SettingsDialog.cpp:548,698,1286`,
+  `ClassicSettingsDialog.cpp:813,991,998,1033`. Candidate for a
+  `PostToTrayWindow(UINT msg, WPARAM = 0, LPARAM = 0)` helper in `AppHelpers.h`.
+  Low priority — consistent with existing pattern.
+
+- [ ] **`HookEngine::CheckConfigEvent()` has no callers in main EXE**
+  TSF DLL uses its own `EngineController::CheckConfigEvent` (separate class).
+  Marked `// Legacy path — kept for TSF DLL compatibility` but that comment is
+  misleading: the TSF DLL never called the HookEngine version. Candidate for
+  deletion along with `configEvent_` member + `Initialize()` call at
+  `HookEngine.cpp:129`. Out of scope for this fix.
+
+---
+
 ## Auto-caps + TSF Apps Feedback — Follow-ups (2026-04-21)
 
 User feedback batch (v2.1.19 Hybrid-TSF testing). Fixed items landed in commits

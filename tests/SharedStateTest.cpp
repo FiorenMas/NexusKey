@@ -319,5 +319,72 @@ TEST_F(SharedStateTest, FeatureFlags_ToggleOneOff_OthersUnchanged) {
     EXPECT_TRUE(out.smartSwitch);
 }
 
+// ============================================================================
+// ABI-gate tests (hybrid TSF DLL update — see docs/plans/2026-04-22-tsf-*)
+// ============================================================================
+
+TEST_F(SharedStateTest, ReservedPool_IsAtLeast1024Bytes) {
+    SharedState state{};
+    EXPECT_GE(sizeof(state.reserved), 1024u);
+}
+
+TEST_F(SharedStateTest, CurrentVersion_IsAtLeast4) {
+    EXPECT_GE(SharedState::CURRENT_VERSION, 4u);
+}
+
+TEST_F(SharedStateTest, FutureVersion_FailsIsValid_SoDllCanDetectMismatch) {
+    // Simulate: new EXE wrote a struct with structVersion = CURRENT_VERSION + 1.
+    // An old DLL reading this memory must see IsValid() == false so it can
+    // disable itself and set TSF_ABI_MISMATCH.
+    SharedState state{};
+    state.InitDefaults();
+    state.structVersion = SharedState::CURRENT_VERSION + 1;
+
+    EXPECT_FALSE(state.IsValid())
+        << "ABI gate relies on IsValid() rejecting future versions";
+}
+
+TEST_F(SharedStateTest, ShrunkStruct_FailsIsValid_SoDllCanDetectMismatch) {
+    // Simulate: writer claimed a struct smaller than the header itself.
+    SharedState state{};
+    state.InitDefaults();
+    state.structSize = 20;  // < 24 (minimum: header + epoch + flags + config)
+
+    EXPECT_FALSE(state.IsValid());
+}
+
+TEST_F(SharedStateTest, AbiHeaderFields_DoNotOverlapEpoch) {
+    // The DLL's IsAbiCompatible() reads magic/structVersion/structSize without
+    // seqlock protection, relying on the fact that these three fields are
+    // written once at Create() and never mutated. If anyone ever adds an
+    // InitDefaults-style writer that touches them after creation, this test
+    // becomes a red flag for the ABI gate.
+    EXPECT_EQ(offsetof(SharedState, magic), 0u);
+    EXPECT_EQ(offsetof(SharedState, structVersion), 4u);
+    EXPECT_EQ(offsetof(SharedState, structSize), 8u);
+    // epoch is the first seqlock-managed field — ABI header must end before it.
+    EXPECT_EQ(offsetof(SharedState, epoch), 12u);
+}
+
+TEST_F(SharedStateTest, SharedFlags_NewUpdateBitsDoNotCollide) {
+    // Sanity: each new flag is non-zero and does not collide with existing bits
+    // or with each other.
+    constexpr uint32_t existing =
+        SharedFlags::VIETNAMESE_MODE |
+        SharedFlags::ENGINE_ENABLED  |
+        SharedFlags::SPELL_CHECK     |
+        SharedFlags::TSF_ACTIVE      |
+        SharedFlags::TSF_READONLY;
+    EXPECT_NE(SharedFlags::TSF_ABI_MISMATCH, 0u);
+    EXPECT_NE(SharedFlags::TSF_PENDING_DLL_SWAP, 0u);
+    EXPECT_NE(SharedFlags::TSF_POST_UPDATE_REBOOT, 0u);
+    EXPECT_EQ(SharedFlags::TSF_ABI_MISMATCH & existing, 0u);
+    EXPECT_EQ(SharedFlags::TSF_PENDING_DLL_SWAP & existing, 0u);
+    EXPECT_EQ(SharedFlags::TSF_POST_UPDATE_REBOOT & existing, 0u);
+    EXPECT_EQ(SharedFlags::TSF_ABI_MISMATCH & SharedFlags::TSF_PENDING_DLL_SWAP, 0u);
+    EXPECT_EQ(SharedFlags::TSF_ABI_MISMATCH & SharedFlags::TSF_POST_UPDATE_REBOOT, 0u);
+    EXPECT_EQ(SharedFlags::TSF_PENDING_DLL_SWAP & SharedFlags::TSF_POST_UPDATE_REBOOT, 0u);
+}
+
 }  // namespace
 }  // namespace NextKey

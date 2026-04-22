@@ -4,6 +4,7 @@
 #pragma once
 
 #include "core/ipc/SharedConstants.h"
+#include "core/ipc/SharedStateManager.h"
 #include "core/config/TypingConfig.h"
 #include "core/SystemConfig.h"
 #include <Windows.h>
@@ -38,6 +39,8 @@ enum class TrayMenuId : UINT {
     InputTelex = 1040,
     InputVNI = 1041,
     InputSimpleTelex = 1042,
+    // Hybrid TSF update — restart prompt (only shown when any update flag is live)
+    RestartWindows = 1050,
 };
 
 /// Callback type for tray events
@@ -92,6 +95,13 @@ public:
     /// Set callback when system config changes (WM_NEXUSKEY_ICON_CHANGED)
     void SetIconConfigChangedCallback(std::function<void()> callback) noexcept { iconConfigChangedCallback_ = std::move(callback); }
 
+    /// Set callback when hook config changes (WM_NEXUSKEY_HOOK_RELOAD) — subprocess → main eager sync
+    void SetHookReloadCallback(std::function<void()> callback) noexcept { hookReloadCallback_ = std::move(callback); }
+
+    /// Non-owning pointer to the process-wide SharedStateManager. Used only to
+    /// read TSF-update flags for the restart-menu item. Safe to pass &g_sharedState.
+    void SetSharedState(SharedStateManager* mgr) noexcept { sharedState_ = mgr; }
+
     /// Process window messages (call from WndProc)
     [[nodiscard]] bool ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noexcept;
 
@@ -123,6 +133,8 @@ private:
     ModeRequestCallback modeRequestCallback_;
     MenuStateGetter menuStateGetter_;
     std::function<void()> iconConfigChangedCallback_;
+    std::function<void()> hookReloadCallback_;
+    SharedStateManager* sharedState_ = nullptr;  // non-owning; for TSF-update flag checks
 
     // Icon style configuration
     uint8_t iconStyle_ = 0;              // 0=Color, 1=Dark/White, 2=Light/Black, 3=Custom

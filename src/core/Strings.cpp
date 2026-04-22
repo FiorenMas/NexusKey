@@ -43,6 +43,11 @@ static const wchar_t* const kVietnamese[] = {
     L"Kiểm tra ngay",                                // UPDATE_CHECK_NOW
     L"Đang kiểm tra...",                             // UPDATE_CHECKING
     L"Tải cập nhật thất bại.",                       // UPDATE_DOWNLOAD_FAILED
+    L"Cập nhật chưa hoàn tất. Khởi động lại Windows để áp dụng phiên bản TSF mới.", // UPDATE_BANNER_PENDING
+    L"Một vài ứng dụng đang chạy phiên bản cũ. Khởi động lại Windows để đồng bộ.",  // UPDATE_BANNER_MISMATCH
+    L"Khởi động lại ngay",                           // UPDATE_BANNER_RESTART_NOW
+    L"Để sau",                                       // UPDATE_BANNER_LATER
+    L"Khởi động lại Windows ngay để hoàn tất cập nhật NexusKey?", // UPDATE_BANNER_CONFIRM
     L"Chưa chọn file nguồn.",                       // CONVERT_NO_SOURCE_FILE
     L"Không thể đọc file nguồn.",                    // CONVERT_READ_ERROR
     L"Clipboard trống.",                             // CONVERT_CLIPBOARD_EMPTY
@@ -57,6 +62,9 @@ static const wchar_t* const kVietnamese[] = {
     L"Không thể gỡ đăng ký TSF.\n"                   // TSF_UNREGISTER_FAILED
     L"Vui lòng chạy với quyền Administrator.",
     L"Không thể thêm NexusKey vào danh sách loại trừ.",  // EXCLUDED_CANNOT_SELF
+    L"Bạn có muốn giữ lại danh sách hiện tại không?",    // IMPORT_KEEP_EXISTING
+    L"Không thể mở file để nạp dữ liệu.",                // IMPORT_FILE_OPEN_FAILED
+    L"Không thể ghi file để xuất dữ liệu.",              // EXPORT_FILE_WRITE_FAILED
 };
 
 // English string table
@@ -94,6 +102,11 @@ static const wchar_t* const kEnglish[] = {
     L"Check now",                                    // UPDATE_CHECK_NOW
     L"Checking...",                                  // UPDATE_CHECKING
     L"Download failed.",                             // UPDATE_DOWNLOAD_FAILED
+    L"Update not finished. Restart Windows to apply the new TSF version.", // UPDATE_BANNER_PENDING
+    L"Some apps still run the old version. Restart Windows to sync.",      // UPDATE_BANNER_MISMATCH
+    L"Restart now",                                  // UPDATE_BANNER_RESTART_NOW
+    L"Later",                                        // UPDATE_BANNER_LATER
+    L"Restart Windows now to finish the NexusKey update?", // UPDATE_BANNER_CONFIRM
     L"No source file selected.",                     // CONVERT_NO_SOURCE_FILE
     L"Cannot read source file.",                     // CONVERT_READ_ERROR
     L"Clipboard is empty.",                          // CONVERT_CLIPBOARD_EMPTY
@@ -108,6 +121,9 @@ static const wchar_t* const kEnglish[] = {
     L"Unable to unregister TSF.\n"                   // TSF_UNREGISTER_FAILED
     L"Please run as Administrator.",
     L"Cannot add NexusKey to the exclusion list.",   // EXCLUDED_CANNOT_SELF
+    L"Keep the existing list?",                      // IMPORT_KEEP_EXISTING
+    L"Could not open file for import.",              // IMPORT_FILE_OPEN_FAILED
+    L"Could not write file for export.",             // EXPORT_FILE_WRITE_FAILED
 };
 
 static_assert(sizeof(kVietnamese) / sizeof(kVietnamese[0]) == static_cast<size_t>(StringId::_COUNT),

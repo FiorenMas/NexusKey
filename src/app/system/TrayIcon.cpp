@@ -7,6 +7,7 @@
 #include "ToastPopup.h"
 #include "DarkModeHelper.h"
 #include "StartupHelper.h"
+#include "PendingDllApply.h"
 #include "core/config/ConfigManager.h"
 #include "core/Strings.h"
 #include <strsafe.h>
@@ -309,6 +310,15 @@ void TrayIcon::ShowContextMenu() {
 
     auto checked = [](bool on) -> UINT { return MF_STRING | (on ? MF_CHECKED : 0); };
 
+    // ── Section 0: Restart-to-finish-update (conditional) ──
+    if (sharedState_
+        && GetUpdateBannerState(*sharedState_) != UpdateBannerState::Hide) {
+        AppendMenuW(hMenu, MF_STRING,
+            static_cast<UINT>(TrayMenuId::RestartWindows),
+            S(StringId::UPDATE_BANNER_RESTART_NOW));
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    }
+
     // ── Section 1: Vietnamese mode toggle ──
     AppendMenuW(hMenu, checked(state.vietnamese),
         static_cast<UINT>(TrayMenuId::ToggleMode), S(StringId::MENU_TOGGLE_VIET));
@@ -447,6 +457,13 @@ bool TrayIcon::ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 delete info;
             }
         }
+        return true;
+    }
+
+    // Hook config changed (TSF apps, excluded apps, macros, …) — eager reload so the
+    // new list applies without waiting for a keystroke / focus change in the target app.
+    if (msg == WM_NEXUSKEY_HOOK_RELOAD && hwnd == hwndMessage_) {
+        if (hookReloadCallback_) hookReloadCallback_();
         return true;
     }
 

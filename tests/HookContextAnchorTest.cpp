@@ -99,6 +99,21 @@ TEST(HookContextAnchorTest, Derive_QuestionAndExclamGlued_NotSentenceStart) {
     EXPECT_EQ(aE.isSentenceStart, 0);
 }
 
+// Multi-space handling: the whitespace skip loop walks across any run of
+// spaces/tabs, so sentence-start fires regardless of how many spaces the user
+// typed between the punct and the cursor.
+TEST(HookContextAnchorTest, Derive_PunctFollowedByMultipleSpaces_SentenceStart) {
+    auto buf2 = U(u"end.  ");     // two spaces
+    auto buf3 = U(u"hey!\t ");    // tab + space
+    HookContextAnchor a2{}, a3{};
+    DeriveAnchorFromPreceding(buf2.data(), buf2.size(), a2);
+    DeriveAnchorFromPreceding(buf3.data(), buf3.size(), a3);
+    EXPECT_EQ(a2.isSentenceStart, 1);
+    EXPECT_EQ(a2.isWordStart, 1);
+    EXPECT_EQ(a3.isSentenceStart, 1);
+    EXPECT_EQ(a3.isWordStart, 1);
+}
+
 TEST(HookContextAnchorTest, Derive_AfterNewline_LineStartNotSentence) {
     auto buf = U(u"hello\n");
     HookContextAnchor a{};
@@ -320,8 +335,10 @@ TEST(HookContextAnchorTest, SharedState_ContainsContextAnchor) {
     EXPECT_EQ(s.contextAnchor.syllableLen, 0);
 }
 
-TEST(HookContextAnchorTest, SharedState_VersionBumpedToV3) {
-    EXPECT_EQ(SharedState::CURRENT_VERSION, 3u);
+TEST(HookContextAnchorTest, SharedState_VersionAtLeastV3) {
+    // v3 added contextAnchor; v4 grew reserved[] to 1024 (no anchor impact).
+    // Both versions expose the same contextAnchor contract.
+    EXPECT_GE(SharedState::CURRENT_VERSION, 3u);
 }
 
 TEST(HookContextAnchorTest, SharedFlags_TsfReadonlyDefined) {

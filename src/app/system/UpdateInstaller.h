@@ -12,6 +12,25 @@
 
 namespace NextKey {
 
+// Single source of truth for the TSF DLL filename. The update flow treats this
+// file specially (see HandleTsfDllReplace) because it is routinely mapped into
+// foreign host processes (Chrome, Word, Outlook, …) via Windows TSF.
+inline constexpr const wchar_t* TSF_DLL_FILENAME = L"NextKeyTSF.dll";
+
+// New DLL stashed with this suffix when the live copy can't be displaced.
+inline constexpr const wchar_t* TSF_DLL_PENDING_SUFFIX = L".pending";
+
+// Marker file written next to the pending DLL so EXE startup can verify
+// authenticity (not user-dropped debris).
+inline constexpr const wchar_t* TSF_DLL_PENDING_MARKER = L"_pending_dll_update";
+
+// Directory where displaced DLLs are parked until reboot releases the section.
+inline constexpr const wchar_t* OLD_VERSION_DIRNAME = L"_old_version";
+
+/// Build a timestamp suffix of the form "_YYYYMMDD_HHMMSS" (plus optional extra
+/// suffix). Used for parked-DLL filenames so repeated updates don't collide.
+std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix = L"") noexcept;
+
 /// Run the self-update installer mode.
 /// Waits for other NexusKey processes to exit, extracts ZIP, replaces files, relaunches.
 /// Called from --install-update CLI route. Never returns.

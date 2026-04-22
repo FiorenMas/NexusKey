@@ -15,21 +15,38 @@ namespace TSF {
 EngineController::EngineController() {
     // Try to open SharedState from main app (read-write for flag toggling)
     if (sharedState_.OpenReadWrite()) {
-        SharedState state = sharedState_.Read();
-        if (state.IsValid()) {
-            // Apply config from SharedState
-            ApplySharedState(state);
-            lastEpoch_ = state.epoch;
-            TSF_LOG(L"EngineController initialized from SharedState (epoch=%u, method=%d)",
-                    state.epoch, state.inputMethod);
-        } else {
-            // SharedState invalid, use defaults
+        // Step 1: ABI check — direct header read, immune to seqlock contention.
+        // magic/structVersion/structSize never change after Create(), so this
+        // answer is stable and cannot spuriously flip TSF_ABI_MISMATCH under
+        // concurrent writer activity.
+        if (!sharedState_.IsAbiCompatible()) {
+            abiOk_ = false;
+            sharedState_.SetOrClearFlag(SharedFlags::TSF_ABI_MISMATCH, true);
             config_.inputMethod = InputMethod::Telex;
             config_.spellCheckEnabled = false;
             config_.optimizeLevel = 0;
             currentMethod_ = InputMethod::Telex;
             engine_ = EngineFactory::Create(config_);
-            TSF_LOG(L"EngineController: SharedState invalid, using defaults");
+            TSF_LOG(L"EngineController: SharedState ABI mismatch — passthrough");
+        } else {
+            // Step 2: ABI OK; try a seqlock Read for the full config.
+            SharedState state = sharedState_.Read();
+            if (state.IsValid()) {
+                ApplySharedState(state);
+                lastEpoch_ = state.epoch;
+                TSF_LOG(L"EngineController initialized from SharedState (epoch=%u, method=%d)",
+                        state.epoch, state.inputMethod);
+            } else {
+                // Seqlock exhausted under contention — use defaults for now.
+                // RefreshFlags / CheckConfigEvent will re-read on next focus.
+                // Do NOT flip TSF_ABI_MISMATCH — ABI is fine.
+                config_.inputMethod = InputMethod::Telex;
+                config_.spellCheckEnabled = false;
+                config_.optimizeLevel = 0;
+                currentMethod_ = InputMethod::Telex;
+                engine_ = EngineFactory::Create(config_);
+                TSF_LOG(L"EngineController: SharedState read contention, using defaults");
+            }
         }
     } else {
         // SharedState not available = EXE not running → disabled
@@ -130,7 +147,13 @@ void EngineController::CheckContextBlocked(ITfContext* pContext) {
 }
 
 bool EngineController::WantKey(UINT vkCode, bool /*isKeyDown*/) {
-    // 0. Check if engine should process keys
+    // 0. ABI-mismatch safety gate: if this DLL's SharedState layout doesn't
+    //    match what the main EXE is writing, pass every key through. Host
+    //    process sees raw English typing until it restarts or the machine
+    //    reboots — Settings dialog + tray render a banner via TSF_ABI_MISMATCH.
+    if (!abiOk_) return false;
+
+    // 1. Check if engine should process keys
     if (sharedState_.IsConnected()) {
         // Read flags directly from shared memory (live, zero-copy)
         uint32_t flags = sharedState_.ReadFlags();

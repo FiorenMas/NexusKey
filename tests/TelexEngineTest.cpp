@@ -1292,6 +1292,55 @@ TEST_F(TelexEngineTest, RealWord_Khuya) {
     EXPECT_EQ(engine_->Peek(), L"khuya");
 }
 
+// When the user typos an extra vowel after placing a tone on a diphthong,
+// the tone must stay on the original diphthong (first two vowels of the cluster),
+// not slide forward onto the typo vowel. Examples: gạo + i → gạoi (not gaọi),
+// thúi + a → thúia, của + i → củai, chảo + i → chảoi, vào + a → vàoa.
+TEST_F(TelexEngineTest, ExtraVowel_ToneStaysOnFirstDiphthong_GaoPlusI) {
+    TypeString(*engine_, L"gaoji");  // gạo + i
+    EXPECT_EQ(engine_->Peek(), L"gạoi");
+}
+
+TEST_F(TelexEngineTest, ExtraVowel_ToneStaysOnFirstDiphthong_ThuiPlusA) {
+    TypeString(*engine_, L"thuisa");  // thúi + a
+    EXPECT_EQ(engine_->Peek(), L"thúia");
+}
+
+TEST_F(TelexEngineTest, ExtraVowel_ToneStaysOnFirstDiphthong_CuaPlusI) {
+    TypeString(*engine_, L"cuari");  // của + i
+    EXPECT_EQ(engine_->Peek(), L"củai");
+}
+
+TEST_F(TelexEngineTest, ExtraVowel_ToneStaysOnFirstDiphthong_ChaoPlusI) {
+    TypeString(*engine_, L"chaori");  // chảo + i
+    EXPECT_EQ(engine_->Peek(), L"chảoi");
+}
+
+// Typo followed by backspace must end up at the original word.
+TEST_F(TelexEngineTest, ExtraVowel_BackspaceRestoresOriginal) {
+    TypeString(*engine_, L"gaoji");  // gạoi
+    engine_->Backspace();            // remove 'i'
+    EXPECT_EQ(engine_->Peek(), L"gạo");
+}
+
+// Vietnamese vowels within a syllable are always contiguous. Once a consonant
+// closes the syllable, a following vowel starts a NEW syllable and the tone
+// must not migrate across the consonant boundary.
+TEST_F(TelexEngineTest, NoToneRelocationAcrossConsonant_TrinhPlusE) {
+    TypeString(*engine_, L"trinhfe");  // trình + literal 'e'
+    EXPECT_EQ(engine_->Peek(), L"trìnhe");
+}
+
+TEST_F(TelexEngineTest, NoToneRelocationAcrossConsonant_KinPlusA) {
+    TypeString(*engine_, L"kifna");  // kìn + literal 'a'
+    EXPECT_EQ(engine_->Peek(), L"kìna");
+}
+
+TEST_F(TelexEngineTest, NoToneRelocationAcrossConsonant_HoanPlusE) {
+    TypeString(*engine_, L"hofane");  // hòan + literal 'e' (tone stays on a, not e)
+    EXPECT_EQ(engine_->Peek(), L"hoàne");
+}
+
 TEST_F(TelexEngineTest, RealWord_Hoai) {
     TypeString(*engine_, L"hoaif");  // hoài
     EXPECT_EQ(engine_->Peek(), L"hoài");
@@ -2340,6 +2389,94 @@ protected:
     TypingConfig config_;
     std::unique_ptr<TypingEngine> engine_;
 };
+
+// Cross-vowel circumflex free-marking must validate the RESULT syllable,
+// not the current buffer. Typing an extra vowel after a toned diphthong
+// (e.g., "vào" + 'a' → would-be "vầo") must not consume the extra vowel
+// when the resulting syllable is invalid Vietnamese.
+class CircumflexFreeMarkSpellOnTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        config_.inputMethod = InputMethod::Telex;
+        config_.spellCheckEnabled = true;
+        config_.optimizeLevel = 0;
+        engine_ = std::make_unique<TypingEngine>(config_);
+    }
+    TypingConfig config_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+
+TEST_F(CircumflexFreeMarkSpellOnTest, VaoPlusA_NoCircumflex) {
+    TypeString(*engine_, L"vaofa");  // vào + extra 'a'
+    EXPECT_EQ(engine_->Peek(), L"vàoa");
+}
+
+TEST_F(CircumflexFreeMarkSpellOnTest, VeoPlusE_NoCircumflex) {
+    TypeString(*engine_, L"veofe");  // vèo + extra 'e'
+    EXPECT_EQ(engine_->Peek(), L"vèoe");
+}
+
+// Regression: legitimate cross-vowel circumflex must still work.
+TEST_F(CircumflexFreeMarkSpellOnTest, CauPlusA_StillCircumflexes) {
+    TypeString(*engine_, L"caua");  // cau + a → câu
+    EXPECT_EQ(engine_->Peek(), L"câu");
+}
+
+TEST_F(CircumflexFreeMarkSpellOnTest, ChieuPlusE_StillCircumflexes) {
+    TypeString(*engine_, L"chieue");  // chieu + e → chiêu
+    EXPECT_EQ(engine_->Peek(), L"chiêu");
+}
+
+// Adjacent-vowel circumflex (aa/ee/oo direct) must also validate the result.
+// "của" + extra 'a' previously produced "củâ" (invalid syllable).
+TEST_F(CircumflexFreeMarkSpellOnTest, CuaPlusA_AdjacentRejected) {
+    TypeString(*engine_, L"cuara");  // của + extra 'a'
+    EXPECT_EQ(engine_->Peek(), L"củaa");
+}
+
+TEST_F(CircumflexFreeMarkSpellOnTest, CuaPlusA_Grave_AdjacentRejected) {
+    TypeString(*engine_, L"cufaa");  // cùa + extra 'a'
+    EXPECT_EQ(engine_->Peek(), L"cùaa");
+}
+
+// Regression: legitimate adjacent circumflex still applies.
+TEST_F(CircumflexFreeMarkSpellOnTest, BaPlusA_AdjacentCircumflexes) {
+    TypeString(*engine_, L"baa");  // ba + a → bâ
+    EXPECT_EQ(engine_->Peek(), L"bâ");
+}
+
+// VNI mode has the same split-tone/mod bug: "của" + '6' would put circumflex
+// on 'a' while tone stays on 'u' → "củâ". Guard must reject and let '6' fall
+// through as a literal.
+class VniModifierSplitGuardTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        config_.inputMethod = InputMethod::Combined;
+        config_.spellCheckEnabled = true;
+        config_.optimizeLevel = 0;
+        engine_ = std::make_unique<TypingEngine>(config_);
+    }
+    TypingConfig config_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+
+TEST_F(VniModifierSplitGuardTest, Cua_Plus6_Rejected) {
+    TypeString(*engine_, L"cuar6");  // của + '6' (circumflex key)
+    // '6' falls through as literal — tone stays on 'u', no bogus â on 'a'.
+    EXPECT_EQ(engine_->Peek(), L"của6");
+}
+
+TEST_F(VniModifierSplitGuardTest, Bao_Plus6_Rejected) {
+    TypeString(*engine_, L"baos6");  // báo + '6'
+    EXPECT_EQ(engine_->Peek(), L"báo6");
+}
+
+// Regression: legitimate VNI circumflex still applies when tone and mod
+// target the same vowel.
+TEST_F(VniModifierSplitGuardTest, Bas_Plus6_Applies) {
+    TypeString(*engine_, L"bas6");  // bá + '6' → bấ (tone and mod both on 'a')
+    EXPECT_EQ(engine_->Peek(), L"bấ");
+}
 
 TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_FL_Cluster_BlocksTone) {
     // "fl" is impossible in Vietnamese → HardEnglish → tone keys literal
@@ -4011,15 +4148,16 @@ TEST_F(EnglishProtectionTest, RepeatedE_TonePlacement_Acute) {
 // ============================================================================
 
 TEST_F(EnglishProtectionTest, ToneDrift_Hoaaaa_Grave) {
-    // "hofaaaa" → tone stays on ò (never slides to a)
-    // 4 a's after ò: 'aa' circumflex escape consumes 1 → 3 a's in output
+    // "hofaaaa" → tone stays on ò (never slides to a).
+    // Circumflex free-marking rejects "hoầ" as invalid up-front, so all
+    // 4 typed a's are preserved as literal (no aa→â→escape cycle).
     TypeString(*engine_, L"hofaaaa");
-    EXPECT_EQ(engine_->Peek(), L"hòaaa");
+    EXPECT_EQ(engine_->Peek(), L"hòaaaa");
 }
 
 TEST_F(EnglishProtectionTest, ToneDrift_Kiaaaa_Grave) {
     TypeString(*engine_, L"kifaaaa");
-    EXPECT_EQ(engine_->Peek(), L"kìaaa");
+    EXPECT_EQ(engine_->Peek(), L"kìaaaa");
 }
 
 TEST_F(EnglishProtectionTest, ToneDrift_Grave_Repeated) {

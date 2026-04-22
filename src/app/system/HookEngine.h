@@ -68,6 +68,11 @@ public:
     /// Check for config changes and reload if needed
     bool CheckConfigEvent();
 
+    /// Re-read SharedState and reload TOML if configGeneration changed.
+    /// Safe cross-process: uses the configGeneration counter, not the Named Event
+    /// (which is auto-reset and reserved for the TSF DLL).
+    void SyncConfigFromSharedState();
+
     /// Set SharedState pointer for direct reading (must be the global instance from main.cpp)
     void SetSharedStateReader(SharedStateManager* ptr) { sharedStatePtr_ = ptr; }
 

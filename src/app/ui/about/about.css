@@ -155,16 +155,4 @@ body {
     background: var(--color-danger);
     color: white;
 }
-
-/* Footer */
-.footer {
-    text-align: center;
-    margin-top: auto;
-}
-
-.footer p {
-    margin: 0;
-    font-size: 10px;
-    color: var(--text-secondary);
-    font-style: italic;
-}
+

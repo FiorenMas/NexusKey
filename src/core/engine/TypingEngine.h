@@ -61,6 +61,7 @@ struct CharState {
     [[nodiscard]] constexpr bool IsD() const noexcept { return base == L'd'; }
     [[nodiscard]] constexpr bool IsHorn() const noexcept { return mod == Modifier::Horn; }
     [[nodiscard]] constexpr bool HasModifier() const noexcept { return mod != Modifier::None; }
+    [[nodiscard]] constexpr bool HasTone() const noexcept { return tone != Tone::None; }
     [[nodiscard]] constexpr bool IsEmpty() const noexcept { return base == 0; }
 };
 
@@ -169,8 +170,17 @@ private:
     // that state has a Circumflex, it is temporarily cleared for the check
     // (models W-modifier P5 which strips the sister â when applying horn to u).
     // Restores state before returning.
+    // SpellCheck::Validate enforces the tone/mod same-vowel invariant, so
+    // this also catches typos like "của" + circumflex on 'a' → c,ủ,â.
     [[nodiscard]] bool WouldBeValidSyllable(size_t targetIdx, Modifier newMod,
                                             size_t clearCircumflexIdx = SIZE_MAX);
+
+    // Common guard used by modifier sites (Telex adjacent/cross-vowel,
+    // VNI Pass 1): reject when applying `newMod` at `targetIdx` produces an
+    // invalid syllable AND the result doesn't match a user spell exclusion.
+    // Returns false when spell check is disabled (no validation performed).
+    [[nodiscard]] bool ShouldRejectModifier(size_t targetIdx, Modifier newMod,
+                                            wchar_t key);
 
     // State
     std::vector<CharState> states_;   // Internal state buffer

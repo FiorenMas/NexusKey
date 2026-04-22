@@ -138,6 +138,7 @@ private:
     bool engineEnabled_ = true;     // ENGINE_ENABLED flag from SharedState
     bool tsfActive_ = false;        // TSF_ACTIVE flag from SharedState (foreground app in TSF list)
     bool vietnameseMode_ = true;    // VIETNAMESE_MODE flag from SharedState
+    bool abiOk_ = true;             // false → SharedState layout mismatch, disable TSF for this process
     LanguageBarButton* langBarButton_ = nullptr;  // Owned, Release'd in UninitLanguageBar
     ITfContext* lastContext_ = nullptr;   // Last seen context (AddRef'd for safe identity comparison)
     bool contextBlocked_ = false;        // True if current context blocks input (password, etc.)

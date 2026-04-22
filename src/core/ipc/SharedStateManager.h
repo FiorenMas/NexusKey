@@ -63,6 +63,13 @@ public:
     /// Check if connected to valid shared memory
     [[nodiscard]] bool IsConnected() const noexcept;
 
+    /// Check ABI compatibility without going through the seqlock-protected
+    /// Read() path. magic / structVersion / structSize are written once at
+    /// Create() and never mutated, so a direct aligned 32-bit read is correct
+    /// and — unlike Read() — cannot spuriously report mismatch under contention.
+    /// Used by the TSF DLL to decide whether to passthrough.
+    [[nodiscard]] bool IsAbiCompatible() const noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> pImpl_;

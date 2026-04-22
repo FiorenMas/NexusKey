@@ -7,6 +7,7 @@
 #include "system/SubprocessHelper.h"
 #include "system/TsfRegistration.h"
 #include "system/UpdateChecker.h"
+#include "system/PendingDllApply.h"
 #include "system/ToastPopup.h"
 #include "core/Version.h"
 #include "sciter/ScaleHelper.h"
@@ -907,10 +908,11 @@ void SettingsDialog::recalcWindowSize() {
     }
 
     if (!DarkModeHelper::IsWindows11OrGreater()) {
-        // Windows 10 CSS fallback adds 12px margin on all sides for drop shadow
-        // Since BORDER_BOX excludes margins, we manually add the margin size here
-        newWidth += static_cast<int>(24 * dpiScale);
-        newHeight += static_cast<int>(24 * dpiScale);
+        // Win10 .container has margin on all sides for drop shadow; BORDER_BOX
+        // excludes margins so the HWND would clip the shadow. Pad by 2×margin.
+        const int pad = static_cast<int>(Win10Frame::FRAME_SIZE_ADD * dpiScale);
+        newWidth += pad;
+        newHeight += pad;
     }
 
     // Keep window position, just resize
@@ -1148,8 +1150,22 @@ void SettingsDialog::initializeUI() {
         }
     }
 
+    // Restart banner — Settings runs as a subprocess so it cannot observe
+    // main-process globals; banner state travels via SharedState flags.
+    // Skip the JS round-trip when there is nothing to show.
+    if (auto bannerState = GetUpdateBannerState(sharedState_);
+        bannerState != UpdateBannerState::Hide) {
+        call_function("showUpdateBanner", sciter::value(static_cast<int>(bannerState)));
+    }
+
     // Flush all batched DOM mutations in one repaint
     root.update(false);
+}
+
+void SettingsDialog::requestRestartWindows() {
+    // Delegate to the shared helper so the Classic dialog and the tray share
+    // the same ExitWindowsEx flow (and SE_SHUTDOWN_NAME privilege acquisition).
+    RestartWindowsWithPrompt(get_hwnd());
 }
 
 void SettingsDialog::onInputMethodChange(int method) {

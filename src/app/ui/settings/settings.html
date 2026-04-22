@@ -46,6 +46,14 @@
             </button>
         </div>
 
+        <!-- Restart banner — driven by TSF update flags in SharedState. Hidden by default. -->
+        <div id="update-banner" class="update-banner" style="display:none">
+            <span class="update-banner__icon">!</span>
+            <span id="update-banner-text" class="update-banner__text"></span>
+            <button id="update-banner-restart" class="update-banner__btn-primary"></button>
+            <button id="update-banner-later" class="update-banner__btn-ghost"></button>
+        </div>
+
         <div class="content-wrapper">
             <!-- Compact Section (Left Panel) -->
             <div class="compact-section">

@@ -311,4 +311,21 @@ bool SharedStateManager::IsConnected() const noexcept {
 #endif
 }
 
+bool SharedStateManager::IsAbiCompatible() const noexcept {
+#ifdef _WIN32
+    if (!pImpl_->pState) return false;
+    // Direct aligned 32-bit reads — these three fields are set once by
+    // Create()'s InitDefaults() before the mapping becomes observable to any
+    // other process and never change afterwards, so no seqlock is required.
+    const uint32_t magic = pImpl_->pState->magic;
+    const uint32_t ver   = pImpl_->pState->structVersion;
+    const uint32_t size  = pImpl_->pState->structSize;
+    return magic == SharedState::MAGIC_VALUE
+        && ver <= SharedState::CURRENT_VERSION
+        && size >= 24;
+#else
+    return false;
+#endif
+}
+
 }  // namespace NextKey

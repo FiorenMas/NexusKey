@@ -7,6 +7,7 @@
 #include "system/SubprocessRunners.h"
 #include "system/UpdateChecker.h"
 #include "system/UpdateInstaller.h"
+#include "system/PendingDllApply.h"
 #include "system/ToastPopup.h"
 #include "core/Version.h"
 #include "core/config/TypingConfig.h"
@@ -277,6 +278,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     auto systemConfig = ConfigManager::LoadSystemConfigOrDefault();
     SetLanguage(static_cast<Language>(systemConfig.language));
 
+    // Apply any deferred TSF DLL swap before the generic update-file cleanup
+    // (which removes _old_version/ and would delete the parked copy if the
+    // order were reversed). Only runs in the main process; subprocess routes
+    // returned above. Result published into SharedState flags after Create().
+    PendingDllState pendingDllState = ApplyPendingDllUpdate();
+
     // Clean up leftover files from a previous update.
     // If files were cleaned up, it means we just finished an update.
     bool updateJustCompleted = CleanupOldUpdateFiles();
@@ -328,6 +335,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         state.SetHotkey(hotkeyConfig);
         g_sharedState.Write(state);
         NEXTKEY_LOG(L"SharedState created for HookEngine mode");
+
+        // Publish the startup DLL-swap outcome ONLY if TSF is currently
+        // registered — users who haven't opted into TSF don't care about
+        // DLL-host synchronization and shouldn't be nagged to reboot.
+        // Bits clear on reboot (SharedState is recreated fresh).
+        const bool tsfInUse = IsTsfRegistered();
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_PENDING_DLL_SWAP,
+            tsfInUse && pendingDllState == PendingDllState::SwapFailed);
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_POST_UPDATE_REBOOT,
+            tsfInUse && pendingDllState == PendingDllState::SwapDoneNeedsReboot);
+        // TSF_ABI_MISMATCH is set cross-process by the DLL itself and only if
+        // a host process loaded our DLL. DLL can't load without registration,
+        // so this flag implicitly requires TSF-in-use. No gate needed.
     }
 
     // Tray Icon
@@ -339,6 +359,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         return 1;
     }
     g_trayIcon.SetMenuCallback(OnMenuCommand);
+    g_trayIcon.SetSharedState(&g_sharedState);  // for TSF-update restart menu item
 
     // Wire mode change callback: HookEngine → defer icon update via PostMessage
     g_hookEngine.SetModeChangeCallback([](bool vietnamese) {
@@ -361,6 +382,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     g_hookEngine.SetTsfModeCallback([](bool tsfActive, bool tsfReadonly) {
         g_sharedState.SetOrClearFlag(SharedFlags::TSF_ACTIVE, tsfActive);
         g_sharedState.SetOrClearFlag(SharedFlags::TSF_READONLY, tsfReadonly);
+    });
+
+    // Wire hook-reload callback: sub-dialog subprocess → main EXE eager sync.
+    // Without this, new lists (TSF apps, excluded apps, macros, …) only apply on the next
+    // keystroke / focus change in the target app. SyncConfigFromSharedState reads
+    // configGeneration; it must not touch the Named Event (auto-reset, reserved for TSF DLL).
+    g_trayIcon.SetHookReloadCallback([]() {
+        g_hookEngine.SyncConfigFromSharedState();
     });
 
     // Wire settings dialog → HookEngine mode set (cross-process)
@@ -519,6 +548,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         state.SetFeatureFlags(EncodeFeatureFlags(config));
         g_sharedState.Write(state);
         NEXTKEY_LOG(L"SharedState created and initialized (TSF_ACTIVE=1, TSF-only mode)");
+
+        // Publish startup DLL-swap outcome. We're in the TSF-only mode branch,
+        // so TSF is registered by construction (earlier `if (!IsTsfRegistered())`
+        // path handled the register prompt) — no IsTsfRegistered() gate needed.
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_PENDING_DLL_SWAP,
+            pendingDllState == PendingDllState::SwapFailed);
+        g_sharedState.SetOrClearFlag(SharedFlags::TSF_POST_UPDATE_REBOOT,
+            pendingDllState == PendingDllState::SwapDoneNeedsReboot);
     }
 
     // Tray Icon
@@ -531,6 +568,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         return 1;
     }
     g_trayIcon.SetMenuCallback(OnMenuCommand);
+    g_trayIcon.SetSharedState(&g_sharedState);  // for TSF-update restart menu item
 
     // Wire settings dialog → TSF mode set (cross-process)
     g_trayIcon.SetModeRequestCallback([](bool vietnamese) {
@@ -749,6 +787,10 @@ void OnMenuCommand(TrayMenuId id) {
             TerminateAllSubprocesses();
             g_running.store(false, std::memory_order_relaxed);
             PostQuitMessage(0);
+            break;
+
+        case TrayMenuId::RestartWindows:
+            RestartWindowsWithPrompt(g_trayIcon.GetMessageWindow());
             break;
 
         default: {

@@ -454,6 +454,36 @@ template<typename CharStateT, typename ModifierT>
     return false;
 }
 
+/// Returns the index of the first vowel that currently carries a tone, or
+/// SIZE_MAX if none. Valid Vietnamese syllables have at most one toned vowel.
+template<typename CharStateT>
+[[nodiscard]] inline size_t FindTonedVowelIndex(
+        const CharStateT* states, size_t count) noexcept {
+    for (size_t i = 0; i < count; ++i) {
+        if (states[i].IsVowel() && states[i].HasTone())
+            return i;
+    }
+    return SIZE_MAX;
+}
+
+/// Returns true if the open range (fromIdx, toIdx) — exclusive on both ends —
+/// contains at least one non-vowel state. Used to detect that two vowel
+/// indices belong to different syllables (a consonant closes one syllable and
+/// starts another), which must block tone relocation across the boundary.
+template<typename CharStateT>
+[[nodiscard]] inline bool HasConsonantBetween(
+        const CharStateT* states, size_t fromIdx, size_t toIdx) noexcept {
+    if (fromIdx > toIdx) {
+        size_t tmp = fromIdx;
+        fromIdx = toIdx;
+        toIdx = tmp;
+    }
+    for (size_t i = fromIdx + 1; i < toIdx; ++i) {
+        if (!states[i].IsVowel()) return true;
+    }
+    return false;
+}
+
 /// Shared FindToneTarget algorithm — returns the index of the vowel that should
 /// receive the tone mark, using priority: P1 horn > P2 modified > P3 diphthong > P4 rightmost.
 /// Returns SIZE_MAX if no vowel found.
@@ -499,19 +529,51 @@ template<typename CharStateT>
                 return v2nd;
         }
 
-        // Diphthong table lookup
+        // Default: diphthong on last two vowels.
+        size_t firstIdx = v2nd;
+        size_t secondIdx = vLast;
         int fi = DiphthongVowelIndex(states[v2nd].base);
         int li = DiphthongVowelIndex(states[vLast].base);
+        bool shifted3Vowel = false;
+
+        // For 3+ contiguous vowels that are NOT a recognized triphthong
+        // (typo: e.g., gạo + extra 'i' → "gaoi"), prefer the FIRST two
+        // vowels of the cluster so the tone stays on the original diphthong
+        // instead of sliding onto the typo vowel. Only applies when the
+        // first pair has a valid rule; otherwise fall back to the last pair
+        // (preserves "uoi"→"uói"-style raw triphthongs without circumflex).
+        if (vowelCount >= 3 && v3rd != SIZE_MAX &&
+            v2nd == v3rd + 1 && vLast == v2nd + 1) {
+            int fiShift = DiphthongVowelIndex(states[v3rd].base);
+            // liShift = DiphthongVowelIndex(states[v2nd]) — already computed as fi.
+            if (fiShift >= 0 && fi >= 0 && table[fiShift][fi] != 0) {
+                li = fi;
+                fi = fiShift;
+                firstIdx = v3rd;
+                secondIdx = v2nd;
+                shifted3Vowel = true;
+            }
+        }
+
         if (fi >= 0 && li >= 0) {
             uint8_t rule = table[fi][li];
 
             // Rule 3: Rising diphthongs (oa, oe) - SECOND with coda, FIRST without
             if (rule == 3) {
-                rule = (vLast + 1 < count) ? 2 : 1;
+                // Shifted 3-vowel case with the "coda" being a REPEAT of the
+                // second vowel (e.g., "hoaa" = o,a,a from "hòa"+extra 'a') is a
+                // typo, not a real triphthong — tone must stay on the original
+                // first vowel (FIRST). For non-repeat vLast (e.g., "oai"→hoài),
+                // keep the standard coda check: vowel after secondIdx = SECOND.
+                if (shifted3Vowel && states[vLast].base == states[v2nd].base) {
+                    rule = 1;
+                } else {
+                    rule = (secondIdx + 1 < count) ? 2 : 1;
+                }
             }
 
-            if (rule == 1) return v2nd;    // tone on FIRST
-            if (rule == 2) return vLast;   // tone on SECOND
+            if (rule == 1) return firstIdx;    // tone on FIRST
+            if (rule == 2) return secondIdx;   // tone on SECOND
         }
     }
 

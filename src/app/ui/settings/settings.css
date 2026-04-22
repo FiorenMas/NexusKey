@@ -968,3 +968,54 @@
     background: var(--color-danger);
     color: white;
 }
+
+/* Restart banner — shown when a reboot is needed after a TSF DLL update. */
+.update-banner {
+    flow: horizontal;
+    padding: 8px 12px;
+    background: rgba(242, 199, 110, 0.28);  /* --color-warning at 28% */
+    border-bottom: 1px solid var(--color-warning);
+    color: #5e4a00;
+    font-size: 12px;
+}
+.update-banner__icon {
+    flow: block;
+    width: 16px; height: 16px;
+    border-radius: 8px;
+    background: var(--color-warning);
+    color: white;
+    text-align: center;
+    line-height: 16px;
+    margin-right: 8px;
+    font-weight: bold;
+    font-size: 11px;
+}
+.update-banner__text {
+    flow: block;
+    padding-right: 12px;
+    size: * *;  /* take remaining horizontal space */
+}
+.update-banner__btn-primary,
+.update-banner__btn-ghost {
+    margin-left: 6px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.update-banner__btn-primary {
+    background: var(--color-warning);
+    color: white;
+    border: none;
+}
+.update-banner__btn-primary:hover {
+    background: #D9A94A;
+}
+.update-banner__btn-ghost {
+    background: transparent;
+    color: #5e4a00;
+    border: 1px solid var(--color-warning);
+}
+.update-banner__btn-ghost:hover {
+    background: rgba(242, 199, 110, 0.18);
+}

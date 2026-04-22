@@ -5,6 +5,9 @@
 
 #include "core/config/ConfigEvent.h"
 #include "core/ipc/SharedStateManager.h"
+#ifdef _WIN32
+#include "core/ipc/SharedConstants.h"
+#endif
 #include <cwctype>
 #include <string>
 
@@ -49,6 +52,13 @@ inline void SignalConfigChange() noexcept {
     if (event.Initialize()) {
         event.Signal();
     }
+#ifdef _WIN32
+    // Eager hook reload: tell main EXE to QuickSync now so new list applies
+    // without waiting for the next keystroke / focus change in the target app.
+    if (HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr)) {
+        PostMessageW(trayWnd, WM_NEXUSKEY_HOOK_RELOAD, 0, 0);
+    }
+#endif
 }
 
 /// Convert wstring to lowercase (ASCII-safe, for app names and macro keys).
