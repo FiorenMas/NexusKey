@@ -6,6 +6,7 @@
 #include "core/engine/CodeTableConverter.h"
 #include "core/engine/EngineFactory.h"
 #include "core/config/ConfigManager.h"
+#include "core/MacroPrefix.h"
 #include "core/ipc/SharedStateManager.h"
 #include "core/Debug.h"
 #include <algorithm>
@@ -93,7 +94,7 @@ bool HookEngine::Start(HINSTANCE hInstance, const TypingConfig& config,
     config_ = config;
     ApplyConfig(config);
     if (macroEnabled_) {
-        macroTable_ = ConfigManager::LoadMacros(ConfigManager::GetConfigPath());
+        ReloadMacroTable();
     }
     autoCapState_ = AutoCapState::Idle;
     engine_ = EngineFactory::Create(config);
@@ -347,7 +348,7 @@ void HookEngine::QuickSyncFromSharedState() {
     }
 
     if (macroEnabled_ && macroTable_.empty()) {
-        macroTable_ = ConfigManager::LoadMacros(ConfigManager::GetConfigPath());
+        ReloadMacroTable();
     } else if (!macroEnabled_) {
         macroTable_.clear();
     }
@@ -401,7 +402,7 @@ void HookEngine::ReloadFromToml() {
                 config.modernOrtho ? 1 : 0, config.allowZwjf ? 1 : 0);
     ApplyConfig(config);
     if (macroEnabled_) {
-        macroTable_ = ConfigManager::LoadMacros(ConfigManager::GetConfigPath());
+        ReloadMacroTable();
     } else {
         macroTable_.clear();
     }
@@ -681,6 +682,10 @@ bool HookEngine::ProcessKeyDown(DWORD vkCode, DWORD /*scanCode*/, DWORD /*flags*
         }
         // Backspace deletes the commit trigger (space/etc.)
         commitUndoState_ = CommitUndoState::Primed;
+        // Any accumulated multi-word-macro state is stale once replay begins —
+        // the phrase buffer no longer mirrors what's on screen.
+        macroCrossCommit_ = false;
+        rawMacroBuffer_.clear();
         if (synthEventsPending_ > 0) {
             // Synthetic events still in flight (word corrections, injected commit trigger).
             // If we pass BS through now it arrives at the app BEFORE those synthetics,
@@ -958,10 +963,16 @@ bool HookEngine::ProcessKeyDown(DWORD vkCode, DWORD /*scanCode*/, DWORD /*flags*
 
         // Preserve macro buffer across commit for printable triggers (e.g., '.' in "a.i")
         // so macros with punctuation in their key can still be matched on the final trigger.
+        // Also preserve across SPACE when the accumulated prefix matches a stored space-
+        // containing key — enables multi-word macros like "oc om bok" = "Óoc Om Bok".
         std::wstring savedMacroBuffer;
         if (macroEnabled_ && !macroTable_.empty() && !tempMacroOff_ && !rawMacroBuffer_.empty()) {
             wchar_t ch = VkToMacroChar(vkCode);
-            if (ch > L' ') savedMacroBuffer = rawMacroBuffer_;
+            if (ch > L' ') {
+                savedMacroBuffer = rawMacroBuffer_;
+            } else if (ch == L' ' && IsSpaceMacroPrefix(rawMacroBuffer_ + L' ', spaceMacroKeys_)) {
+                savedMacroBuffer = rawMacroBuffer_ + L' ';
+            }
         }
 
         bool restored = CommitComposition();
@@ -1970,6 +1981,19 @@ void HookEngine::ReloadTsfApps() {
     }
 }
 
+void HookEngine::ReloadMacroTable() {
+    // Keys are stored verbatim from TOML. The matching rule in TryExpandMacro
+    // reads the stored case to decide behavior: all-lowercase keys match any
+    // typed case; keys with any uppercase require an exact case match.
+    macroTable_ = ConfigManager::LoadMacros(ConfigManager::GetConfigPath());
+    // Index keys containing spaces so the save-before-commit path can cheaply
+    // decide whether to preserve the macro buffer across a space commit.
+    spaceMacroKeys_.clear();
+    for (const auto& [key, _] : macroTable_) {
+        if (key.find(L' ') != std::wstring::npos) spaceMacroKeys_.insert(key);
+    }
+}
+
 void HookEngine::SaveEnglishModeAppsIfDirty() {
     if (!appModeDirty_ || !smartSwitch_) return;
     appModeDirty_ = false;
@@ -2691,25 +2715,46 @@ HookEngine::MacroResult HookEngine::TryExpandMacro(wchar_t triggerChar) {
     std::wstring lowerKey = ToLowerAscii(rawMacroBuffer_);
     bool isPartOfMacro = false;
     bool matchedViaComposition = false;  // true when matched via Priority 3/4
+    bool matchedExact = false;            // true when match used the typed case verbatim
 
-    // Priority 1: full buffer (includes accumulated trigger char)
-    auto it = macroTable_.find(lowerKey);
+    // Matching contract (raw-buffer priorities 1 and 2):
+    //   - Stored key has any uppercase → exact case match only.
+    //   - Stored key is all lowercase    → case-insensitive; typed case adapts.
+    // Implemented with a two-step find: exact first, then lowered. An exact hit
+    // can be strict (upper key + typed matches) or a natural match on a lowercase key.
+    // A lowered-only hit can only land on a lowercase key (upper keys wouldn't match
+    // a lowercase probe), which is exactly the flexible branch.
+
+    // Priority 1: full buffer (raw typed, includes accumulated trigger char)
+    auto it = macroTable_.find(rawMacroBuffer_);
+    if (it != macroTable_.end()) {
+        matchedExact = true;
+    } else {
+        it = macroTable_.find(lowerKey);
+    }
     if (it != macroTable_.end() && triggerChar > L' ') {
         isPartOfMacro = true;
     }
     // Priority 2: buffer without trigger char (e.g., "btw" from "btw.")
     if (it == macroTable_.end() && triggerChar > L' ' &&
         lowerKey.size() > 1 && lowerKey.back() == triggerChar) {
-        it = macroTable_.find(lowerKey.substr(0, lowerKey.size() - 1));
+        std::wstring rawWithoutTrigger = rawMacroBuffer_.substr(0, rawMacroBuffer_.size() - 1);
+        it = macroTable_.find(rawWithoutTrigger);
+        if (it != macroTable_.end()) {
+            matchedExact = true;
+        } else {
+            it = macroTable_.find(lowerKey.substr(0, lowerKey.size() - 1));
+        }
     }
-    // Priority 3: composed Vietnamese output + trigger (handles tone escape: "urrl\" → "url\")
+    // Priority 3/4: composition-based matches stay case-insensitive only — the
+    // "raw" here is engine-composed output, not the user's keystroke case, so
+    // the strict-case contract above doesn't apply cleanly.
     if (it == macroTable_.end() && !previousComposition_.empty()) {
         std::wstring compKey = ToLowerAscii(previousComposition_);
         if (triggerChar > L' ') {
             it = macroTable_.find(compKey + triggerChar);
             if (it != macroTable_.end()) { isPartOfMacro = true; matchedViaComposition = true; }
         }
-        // Priority 4: composed Vietnamese output alone
         if (it == macroTable_.end()) {
             it = macroTable_.find(compKey);
             if (it != macroTable_.end()) matchedViaComposition = true;
@@ -2747,24 +2792,50 @@ HookEngine::MacroResult HookEngine::TryExpandMacro(wchar_t triggerChar) {
         bsCount = rawMacroBuffer_.size();
         if (triggerChar > L' ' && bsCount > 0) --bsCount;
     }
-    // Auto-capitalize expansion to match typed case pattern
+    // Auto-capitalize expansion to match typed case — only fires when BOTH:
+    //   (a) the match was flexible (stored key all-lowercase, so case-insensitive
+    //       matching was in play — !matchedExact && !matchedViaComposition), and
+    //   (b) the stored expansion is itself all-lowercase (no deliberate casing).
+    // Transform: typed all-upper → expansion all-upper; typed first-upper → first-upper.
+    // CharUpperBuffW is locale-aware so Vietnamese diacritics uppercase correctly
+    // ('ô' → 'Ô'), unlike towupper() which only handles ASCII under the C locale.
     std::wstring expansion = it->second;
-    if (autoCapsMacro_ && !rawMacroBuffer_.empty()) {
-        bool allUpper = true, firstUpper = iswupper(rawMacroBuffer_[0]);
-        for (auto c : rawMacroBuffer_) {
-            if (!iswupper(c)) { allUpper = false; break; }
-        }
-        if (allUpper && rawMacroBuffer_.size() > 1) {
-            // Skip \n escape sequences — towupper('n') → 'N' breaks newline detection
-            for (size_t i = 0; i < expansion.size(); ++i) {
-                if (expansion[i] == L'\\' && i + 1 < expansion.size() && expansion[i + 1] == L'n') {
-                    ++i;  // skip the 'n' in '\n'
-                } else {
-                    expansion[i] = towupper(expansion[i]);
-                }
+    if (autoCapsMacro_ && !matchedExact && !matchedViaComposition &&
+        !rawMacroBuffer_.empty() && !expansion.empty()) {
+        // Expansion has no upper iff lowercasing it is a no-op (locale-aware).
+        std::wstring expansionLower = expansion;
+        CharLowerBuffW(expansionLower.data(), static_cast<DWORD>(expansionLower.size()));
+        const bool expansionAllLower = (expansionLower == expansion);
+        if (expansionAllLower) {
+            // Inspect only the letter chars — rawMacroBuffer_ may include an
+            // appended trigger (e.g. "BTW." when trigger is '.'), and
+            // iswupper('.') is false and would wrongly defeat all-upper detection.
+            // Note: iswupper/iswalpha are ASCII-only under the C locale, which is
+            // fine here — rawMacroBuffer_ only accumulates VK 0x41-0x5A and
+            // VkToMacroChar() triggers, both ASCII. The transform below uses
+            // locale-aware CharUpperBuffW so non-ASCII expansion chars ('ô'→'Ô')
+            // still uppercase correctly.
+            bool allUpper = true;
+            bool anyAlpha = false;
+            for (auto c : rawMacroBuffer_) {
+                if (!iswalpha(c)) continue;
+                anyAlpha = true;
+                if (!iswupper(c)) { allUpper = false; break; }
             }
-        } else if (firstUpper && !expansion.empty()) {
-            expansion[0] = towupper(expansion[0]);
+            allUpper = allUpper && anyAlpha && rawMacroBuffer_.size() > 1;
+            bool firstUpper = iswupper(rawMacroBuffer_[0]);
+            if (allUpper) {
+                // Skip \n escape sequences — uppercasing 'n' → 'N' breaks newline detection
+                for (size_t i = 0; i < expansion.size(); ++i) {
+                    if (expansion[i] == L'\\' && i + 1 < expansion.size() && expansion[i + 1] == L'n') {
+                        ++i;  // skip the 'n' in '\n'
+                    } else {
+                        CharUpperBuffW(&expansion[i], 1);
+                    }
+                }
+            } else if (firstUpper) {
+                CharUpperBuffW(&expansion[0], 1);
+            }
         }
     }
 
@@ -2840,8 +2911,35 @@ HookEngine::MacroResult HookEngine::TryExpandMacro(wchar_t triggerChar) {
 }
 
 wchar_t HookEngine::VkToMacroChar(DWORD vkCode) noexcept {
-    // Use MapVirtualKeyW to get the actual character for this VK code,
-    // respecting the current keyboard layout (not hardcoded to US QWERTY).
+    // Translate VK → character with the current modifier state, so Shift/Caps/
+    // AltGr yield the actual typed char (e.g. Shift+VK_OEM_PERIOD on US → '>'
+    // instead of the unshifted '.'). Uses the foreground window's layout so
+    // macros match what the target app would receive.
+    //
+    // Modifier state: GetKeyboardState is not reliable from a low-level hook
+    // thread (LL hooks don't feed our message queue), so we build a minimal
+    // key-state snapshot from GetAsyncKeyState for the modifiers ToUnicodeEx
+    // actually consults.
+    BYTE keyState[256] = {};
+    if (GetAsyncKeyState(VK_SHIFT)   & 0x8000) keyState[VK_SHIFT]   = 0x80;
+    if (GetAsyncKeyState(VK_CONTROL) & 0x8000) keyState[VK_CONTROL] = 0x80;
+    if (GetAsyncKeyState(VK_MENU)    & 0x8000) keyState[VK_MENU]    = 0x80;
+    if (GetKeyState(VK_CAPITAL) & 0x0001)      keyState[VK_CAPITAL] = 0x01;
+
+    UINT scan = MapVirtualKeyW(vkCode, MAPVK_VK_TO_VSC);
+    HWND fg = GetForegroundWindow();
+    HKL layout = GetKeyboardLayout(fg ? GetWindowThreadProcessId(fg, nullptr) : 0);
+
+    // wFlags bit 2 (0x4) = "do not change the keyboard state" — required so
+    // ToUnicodeEx doesn't advance pending dead-key state. Win10 1607+.
+    wchar_t buf[4] = {};
+    int result = ToUnicodeEx(vkCode, scan, keyState, buf, 4, 0x4, layout);
+    if (result > 0) {
+        return static_cast<wchar_t>(towlower(buf[0]));
+    }
+
+    // result <= 0: dead key (-1) or no translation (0). Fall back to the
+    // unshifted mapping — matches the pre-ToUnicodeEx behavior for these keys.
     UINT ch = MapVirtualKeyW(vkCode, MAPVK_VK_TO_CHAR);
     return ch ? static_cast<wchar_t>(towlower(static_cast<wchar_t>(ch))) : 0;
 }

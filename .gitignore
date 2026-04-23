@@ -61,5 +61,6 @@ docs/*
 !docs/SECURITY.md
 !docs/SECURITY_FIXES-distillate.md
 !docs/tray-icon-sync-analysis-v2-distillate.md
+!docs/macro-case-rules.md
 !docs/plans/
 !docs/plans/pre-tone-stop-final-check-distillate.md

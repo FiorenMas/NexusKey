@@ -1,5 +1,58 @@
 # TODO
 
+## Macro Case-Matching + Multi-word Macros — Follow-ups (2026-04-22)
+
+Landed: issue #98 fix (case-insensitive match for all-lowercase keys, strict for
+keys with any uppercase), `VkToMacroChar` Shift-aware via `ToUnicodeEx`, and
+multi-word macro keys via phrase-prefix buffer preservation. Rules doc:
+`docs/macro-case-rules.md`. Design: `docs/plans/2026-04-22-multiword-macro-design.md`.
+
+### Tech debt surfaced
+
+- [ ] **Extract `ApplyAutoCapsMacro` to pure function** — `src/app/system/HookEngine.cpp:2778-2826`
+  Auto-caps transform (expansionAllLower check, allUpper/firstUpper detection,
+  `CharUpperBuffW` loop) is inline in `TryExpandMacro` and therefore untestable
+  from Linux. Mirror of `src/core/MacroPrefix.h`: extract to `src/core/MacroCase.h`
+  with a Linux stub for `CharUpperBuffW` (or inject the case-fold fn) and add
+  gtest covering the four-quadrant matrix (stored-case × typed-case) flagged in
+  party-mode review.
+
+- [ ] **Zero unit tests on `TryExpandMacro` match logic** — `src/app/system/HookEngine.cpp:2699-2747`
+  Two-step find (`find(rawBuffer)` → `find(lowerKey)`), `matchedExact` flag, and
+  P1/P2/P3/P4 priority ordering have no coverage. Extract the matching contract
+  into a pure `ResolveMacroMatch(buffer, previousComp, trigger, table) ->
+  {iterator, matchedExact, matchedViaComposition}` and table-test it on Linux.
+
+- [ ] **Composition-path (P3/P4) auto-caps asymmetry** — `src/app/system/HookEngine.cpp:2732-2745, 2786`
+  Auto-caps explicitly gated on `!matchedViaComposition` — typing `CHOOL` via
+  Telex composing to `chôl` and matching a stored `chol` macro yields `chôl`,
+  not `CHÔL`. Intentional (composition case is engine-driven, not user-typed),
+  but users may not understand the asymmetry. Decide: document as a known limit
+  in `docs/macro-case-rules.md`, or mirror the auto-caps logic on composition
+  matches too.
+
+- [ ] **`\n` escape handling in auto-caps loop is incomplete** — `src/app/system/HookEngine.cpp:2806-2813`
+  Loop skips the 2-char `\n` escape when uppercasing. Does not handle `\t`,
+  `\\`, or any other escape. Verify what `LoadMacros` actually does with
+  escapes at load:
+    - if decoded at load → the `\n` skip is dead code; remove it.
+    - if passed through verbatim → `\t` under auto-upper corrupts to `\T`.
+
+- [ ] **`VkToMacroChar` syscalls per commit trigger** — `src/app/system/HookEngine.cpp:2851-2888`
+  Calls `GetAsyncKeyState ×3`, `GetKeyState`, `MapVirtualKeyW ×2`,
+  `GetForegroundWindow`, `GetWindowThreadProcessId`, `GetKeyboardLayout`,
+  `ToUnicodeEx` each time. Only runs on commit triggers (~10/sec human typing),
+  so cost is negligible — but the foreground HKL could be cached on focus
+  change if ever profiled hot. Low priority.
+
+- [ ] **Release-note the case-matching behavior change** — `RELEASE_NOTES.md`
+  Pre-fix: uppercase-keyed macros never fired at all (bug). Post-fix: they fire
+  but only on exact case. Users who worked around the bug by adding lowercase
+  duplicates will now see both entries match. Note must call this out with the
+  migration example from `docs/macro-case-rules.md`.
+
+---
+
 ## Detach Fork
 - [x] Detach fork: repo `phatMT97/NexusKey` is forked from `tuyenvm/OpenKey`. Submitted GitHub Support ticket (2026-04-05).
 

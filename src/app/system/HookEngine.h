@@ -172,6 +172,10 @@ private:
     void ReloadAppOverrides();
     void ReloadExcludedApps();   // Reload excluded app set from TOML
     void ReloadTsfApps();        // Reload TSF app set from TOML
+    // Reload macros from TOML with keys lowercased for case-insensitive lookup.
+    // Runtime matching already lowercases the typed buffer; normalizing the
+    // map keys mirrors that so capitalized TOML keys (e.g. `Chol = "Chôl"`) match.
+    void ReloadMacroTable();
     void SaveEnglishModeAppsIfDirty();  // Persist English-mode apps to TOML
 
     // Engine state
@@ -267,6 +271,7 @@ private:
     bool tempMacroOff_ = false;       // Runtime: macro disabled for current word
     bool macroCrossCommit_ = false;   // rawMacroBuffer_ spans multiple engine commits (macro key has punctuation)
     std::unordered_map<std::wstring, std::wstring> macroTable_;
+    std::unordered_set<std::wstring> spaceMacroKeys_;  // subset of macroTable_ keys that contain ' '
     std::wstring rawMacroBuffer_;
 
     // Hooks

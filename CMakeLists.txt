@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NexusKey VERSION 2.1.22 LANGUAGES CXX)
+project(NexusKey VERSION 2.1.23 LANGUAGES CXX)
 
 # Generate Version.h from Version.h.in — version is defined once in project() above.
 configure_file(
@@ -395,6 +395,7 @@ set(NEXTKEY_TEST_SOURCES
     tests/CodeTableConverterTest.cpp
     tests/UpdateSecurityTest.cpp
     tests/EngineBenchmarkTest.cpp
+    tests/MacroPrefixTest.cpp
     src/app/system/UpdateSecurity.cpp
 )
 
