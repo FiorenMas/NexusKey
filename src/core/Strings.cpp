@@ -65,6 +65,8 @@ static const wchar_t* const kVietnamese[] = {
     L"Bạn có muốn giữ lại danh sách hiện tại không?",    // IMPORT_KEEP_EXISTING
     L"Không thể mở file để nạp dữ liệu.",                // IMPORT_FILE_OPEN_FAILED
     L"Không thể ghi file để xuất dữ liệu.",              // EXPORT_FILE_WRITE_FAILED
+    L"Không thể tự khởi động lại để bỏ quyền Admin.\n"   // ADMIN_DEELEVATION_FAILED
+    L"Vui lòng thoát và khởi động lại NexusKey thủ công.",
 };
 
 // English string table
@@ -124,6 +126,8 @@ static const wchar_t* const kEnglish[] = {
     L"Keep the existing list?",                      // IMPORT_KEEP_EXISTING
     L"Could not open file for import.",              // IMPORT_FILE_OPEN_FAILED
     L"Could not write file for export.",             // EXPORT_FILE_WRITE_FAILED
+    L"Could not auto-restart to drop admin rights.\n"  // ADMIN_DEELEVATION_FAILED
+    L"Please exit and relaunch NexusKey manually.",
 };
 
 static_assert(sizeof(kVietnamese) / sizeof(kVietnamese[0]) == static_cast<size_t>(StringId::_COUNT),

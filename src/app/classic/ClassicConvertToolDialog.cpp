@@ -3,12 +3,14 @@
 
 #include "ClassicConvertToolDialog.h"
 #include "core/config/ConfigManager.h"
+#include "core/CrashLog.h"
 #include "app/helpers/AppHelpers.h"
 #include "core/engine/CodeTableConverter.h"
 #include "core/Strings.h"
 
 #include <windowsx.h>
 #include <commdlg.h>
+#include <exception>
 
 namespace NextKey::Classic {
 
@@ -575,7 +577,7 @@ int ClassicConvertToolDialog::Dpi(int value) const noexcept {
 
 // ════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicConvertToolDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicConvertToolDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicConvertToolDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -661,6 +663,12 @@ LRESULT CALLBACK ClassicConvertToolDialog::WndProc(HWND hwnd, UINT msg, WPARAM w
             return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicConvertToolDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicConvertToolDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

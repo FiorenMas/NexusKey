@@ -1,5 +1,6 @@
 # ===== CMake-generated files =====
 src/core/Version.h
+src/app/resources.cpp
 
 # ===== Build artifacts =====
 /build/

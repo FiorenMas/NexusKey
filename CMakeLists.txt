@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NexusKey VERSION 2.1.23 LANGUAGES CXX)
+project(NexusKey VERSION 2.1.24 LANGUAGES CXX)
 
 # Generate Version.h from Version.h.in — version is defined once in project() above.
 configure_file(
@@ -48,6 +48,8 @@ target_include_directories(NextKeyEngine PUBLIC
 # Core Library (platform layer: SharedState, Config, Debug)
 set(NEXTKEY_CORE_SOURCES
     src/core/Debug.h
+    src/core/CrashLog.h
+    src/core/CrashLog.cpp
     src/core/Strings.h
     src/core/Strings.cpp
     src/core/ipc/SharedState.h

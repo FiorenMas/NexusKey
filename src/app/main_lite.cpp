@@ -13,6 +13,7 @@
 #include "core/Strings.h"
 #include "core/SystemConfig.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
 
 #include "system/HookEngine.h"
 #include "system/HotkeyManager.h"
@@ -36,6 +37,7 @@
 #include <commctrl.h>
 #include <ole2.h>
 #include <timeapi.h>
+#include <exception>
 #include <memory>
 #include <string>
 #include <atomic>
@@ -91,35 +93,43 @@ static void SpawnSettingsDialog() {
     // (tray icon, hook engine callbacks, etc. must remain responsive).
     std::thread([]() {
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        NextKey::Classic::ClassicSettingsDialog dialog;
-        dialog.Show(g_hInstance);
-        g_settingsOpen = false;
+        try {
+            NextKey::Classic::ClassicSettingsDialog dialog;
+            dialog.Show(g_hInstance);
+            g_settingsOpen = false;
 
-        // After dialog closes, reload config in case settings changed
-        auto config = ConfigManager::LoadOrDefault();
+            // After dialog closes, reload config in case settings changed
+            auto config = ConfigManager::LoadOrDefault();
 
-        // Reload convert + toggle hotkeys (mirrors HotkeyWiring callback)
-        {
-            auto cc = ConfigManager::LoadConvertConfigOrDefault();
-            if (g_quickConvert) g_quickConvert->UpdateConfig(cc);
-            g_hotkeyManager.UpdateHotkey(g_convertHotkeySlot, cc.hotkey);
-            g_trayIcon.RefreshConvertHotkeyCache(cc);
+            // Reload convert + toggle hotkeys (mirrors HotkeyWiring callback)
+            {
+                auto cc = ConfigManager::LoadConvertConfigOrDefault();
+                if (g_quickConvert) g_quickConvert->UpdateConfig(cc);
+                g_hotkeyManager.UpdateHotkey(g_convertHotkeySlot, cc.hotkey);
+                g_trayIcon.RefreshConvertHotkeyCache(cc);
 
-            auto hk = ConfigManager::LoadHotkeyConfigOrDefault();
-            g_hotkeyManager.UpdateHotkey(g_toggleHotkeySlot, hk);
+                auto hk = ConfigManager::LoadHotkeyConfigOrDefault();
+                g_hotkeyManager.UpdateHotkey(g_toggleHotkeySlot, hk);
+            }
+
+            // Refresh floating icon config
+            auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
+            if (sysConfig.showFloatingIcon) {
+                EnsureFloatingIconCreated();
+                g_floatingIcon.SetVisible(true);
+            } else {
+                g_floatingIcon.Destroy();
+            }
+
+            // Refresh tray icon style
+            g_trayIcon.SetIconConfig(sysConfig.iconStyle, sysConfig.customColorV, sysConfig.customColorE);
+        } catch (const std::exception& e) {
+            CrashLog(L"SpawnSettingsDialog::thread", e.what());
+            g_settingsOpen = false;
+        } catch (...) {
+            CrashLog(L"SpawnSettingsDialog::thread", "(non-std exception)");
+            g_settingsOpen = false;
         }
-
-        // Refresh floating icon config
-        auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
-        if (sysConfig.showFloatingIcon) {
-            EnsureFloatingIconCreated();
-            g_floatingIcon.SetVisible(true);
-        } else {
-            g_floatingIcon.Destroy();
-        }
-
-        // Refresh tray icon style
-        g_trayIcon.SetIconConfig(sysConfig.iconStyle, sysConfig.customColorV, sysConfig.customColorE);
         CoUninitialize();
     }).detach();
 }
@@ -303,6 +313,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     g_hInstance = hInstance;
     InstallCursorCrashHandler();  // Restore system cursors if we crash during window picking
 
+    // Last-resort catch: if a C++ throw ever escapes all try/catch at thread boundaries
+    // (shouldn't happen after issue #103 fix, but belt-and-suspenders), log before dying
+    // so the next crash report shows WHAT escaped, not a silent std::terminate.
+    std::set_terminate([]() noexcept {
+        CrashLog(L"std::terminate", "uncaught exception reached std::terminate");
+        std::abort();
+    });
+
     // ── Command-line routes (shared with main build) ──
 
     if (lpCmdLine && wcsstr(lpCmdLine, L"--unregister-tsf") != nullptr) {
@@ -349,6 +367,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         return 1;
     }
 
+    const bool isAdminRestart = HasCmdlineFlag(lpCmdLine, ADMIN_RESTART_FLAG);
+
     // Self-elevate if "Run as Admin" is enabled but we're not elevated.
     {
         auto preConfig = ConfigManager::LoadSystemConfigOrDefault();
@@ -362,9 +382,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // NOTE: Use default DACL (nullptr). CO SID doesn't resolve for non-container objects.
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\NexusKeyLite_Main_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        NEXTKEY_LOG(L"Another Lite instance is already running. Exiting.");
-        CloseHandle(hMutex);
-        return 0;
+        if (isAdminRestart) {
+            // See main.cpp for rationale — wait for old instance to release.
+            DWORD r = WaitForSingleObject(hMutex, 10000);
+            if (r != WAIT_OBJECT_0 && r != WAIT_ABANDONED) {
+                NEXTKEY_LOG(L"Admin-restart: timeout waiting for old Lite mutex (r=%lu)", r);
+                CloseHandle(hMutex);
+                return 1;
+            }
+            NEXTKEY_LOG(L"Admin-restart: Lite mutex ownership acquired (%s)",
+                         r == WAIT_ABANDONED ? L"abandoned" : L"released");
+        } else {
+            NEXTKEY_LOG(L"Another Lite instance is already running. Exiting.");
+            CloseHandle(hMutex);
+            return 0;
+        }
     }
 
     // ── Initialization ──
@@ -540,13 +572,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
 
     if (updateJustCompleted) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"PostUpdateToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"PostUpdateToast::thread", "(non-std exception)");
+            }
         }).detach();
     } else if (updateJustFailed) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"UpdateFailedToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"UpdateFailedToast::thread", "(non-std exception)");
+            }
         }).detach();
     }
 
@@ -554,22 +598,32 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
 
     if (systemConfig.autoCheckUpdate) {
         std::thread([]() {
-            Sleep(3000);
-            auto info = UpdateChecker::CheckForUpdate();
-            if (info.available) {
-                HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-                if (trayWnd) {
-                    auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
-                    if (pInfo) {
-                        // WndProc returns true (1) on success and takes ownership of pInfo.
-                        // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
-                        if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
-                                          reinterpret_cast<LPARAM>(pInfo))) {
-                            delete pInfo;
+            // URLDownloadToFileW (used by CheckForUpdate) requires COM init on the
+            // calling thread — sibling threads in this file all call it; match them.
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            try {
+                Sleep(3000);
+                auto info = UpdateChecker::CheckForUpdate();
+                if (info.available) {
+                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                    if (trayWnd) {
+                        auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
+                        if (pInfo) {
+                            // WndProc returns true (1) on success and takes ownership of pInfo.
+                            // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
+                            if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
+                                              reinterpret_cast<LPARAM>(pInfo))) {
+                                delete pInfo;
+                            }
                         }
                     }
                 }
+            } catch (const std::exception& e) {
+                CrashLog(L"AutoUpdateCheck::thread", e.what());
+            } catch (...) {
+                CrashLog(L"AutoUpdateCheck::thread", "(non-std exception)");
             }
+            CoUninitialize();
         }).detach();
     }
 

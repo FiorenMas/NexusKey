@@ -12,12 +12,14 @@
 #include "core/config/ConfigManager.h"
 #include "core/ipc/SharedConstants.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
 #include "core/Version.h"
 #include "system/StartupHelper.h"
 #include "system/UpdateChecker.h"
 #include "system/PendingDllApply.h"
 #include "core/Strings.h"
 
+#include <exception>
 #include <thread>
 #include <atomic>
 #include <memory>
@@ -481,7 +483,7 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
                 checkControls_[i] = CreateBtn(meta.label, cx, cy, colWidth, Dpi(kControlHeight), meta.win32Id);
             }
         } else if (meta.type == SettingType::Dropdown) {
-            int lblW = Dpi(100);
+            int lblW = Dpi(115);
             int comboW = colWidth - lblW - Dpi(4);
 
             HWND lbl = CreateLabel(meta.label, cx, cy + Dpi(4), lblW, Dpi(kControlHeight), 0);
@@ -492,6 +494,7 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
                 ComboBox_AddString(combo, L"Nền tối");
                 ComboBox_AddString(combo, L"Nền sáng");
                 ComboBox_AddString(combo, L"Tự chọn");
+                ComboBox_AddString(combo, L"Tự động");
             }
             if (wcscmp(meta.id, L"startup-mode") == 0) {
                 ComboBox_AddString(combo, L"Tiếng Việt");
@@ -902,7 +905,13 @@ void ClassicSettingsDialog::OnActionButton(uint16_t controlId) {
             auto state = std::make_shared<State>();
 
             std::thread([state]() {
-                state->info = UpdateChecker::CheckForUpdate();
+                try {
+                    state->info = UpdateChecker::CheckForUpdate();
+                } catch (const std::exception& e) {
+                    NextKey::CrashLog(L"ClassicSettings::UpdateCheck::thread", e.what());
+                } catch (...) {
+                    NextKey::CrashLog(L"ClassicSettings::UpdateCheck::thread", "(non-std exception)");
+                }
                 state->done.store(true, std::memory_order_release);
             }).detach();
 
@@ -1101,6 +1110,7 @@ void ClassicSettingsDialog::RefreshLabels() {
         ComboBox_AddString(iconCombo, en ? L"Dark" : L"Nền tối");
         ComboBox_AddString(iconCombo, en ? L"Light" : L"Nền sáng");
         ComboBox_AddString(iconCombo, en ? L"Custom" : L"Tự chọn");
+        ComboBox_AddString(iconCombo, en ? L"Auto" : L"Tự động");
         if (sel >= 0) ComboBox_SetCurSel(iconCombo, sel);
     }
 
@@ -1279,7 +1289,7 @@ int ClassicSettingsDialog::Dpi(int value) const noexcept {
 // Window procedure
 // ════════════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicSettingsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicSettingsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicSettingsDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -1462,6 +1472,12 @@ LRESULT CALLBACK ClassicSettingsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wPar
         }
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicSettingsDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicSettingsDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

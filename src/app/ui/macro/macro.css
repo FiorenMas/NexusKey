@@ -128,9 +128,9 @@
 
 /* Textarea for multi-line macro content */
 textarea.setting-input.macro-textarea {
-    height: 130px !important;
-    min-height: 100px !important;
-    max-height: 150px !important;
+    height: 80px !important;
+    min-height: 60px !important;
+    max-height: 120px !important;
     font-family: monospace;
     font-size: 12px;
     resize: none;

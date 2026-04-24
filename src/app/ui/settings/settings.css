@@ -57,11 +57,45 @@
     line-height: 36px;
 }
 
+/* Admin Badge - shown when the app is running elevated.
+   Sits to the left of the pin button; hidden by default. */
+.admin-badge {
+    display: none;
+    position: absolute;
+    right: 68px;
+    top: 6px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    cursor: help;
+    padding: 0;
+    outline: none;
+    border-radius: 50%;
+    transition: background 0.2s ease, transform 0.2s ease;
+    pointer-events: auto;
+}
+
+.admin-badge.active {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.admin-badge svg {
+    display: block;
+    fill: #fcb745;
+}
+
+.admin-badge:hover {
+    background: rgba(252, 183, 69, 0.15);
+}
+
 /* Pin Button in Title Bar - absolute positioned before close button */
 .btn-pin {
-    display: block;
-    text-align: center;
-    line-height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     position: absolute;
     right: 40px;
     top: 6px;
@@ -114,9 +148,9 @@
 
 /* Close Button in Title Bar - absolute positioned at right */
 .btn-close {
-    display: block;
-    text-align: center;
-    line-height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     position: absolute;
     right: 12px;
     top: 6px;
@@ -132,7 +166,6 @@
     font-size: 20px;
     font-weight: 300;
     color: var(--color-danger);
-    line-height: 1;
 }
 
 .btn-close:hover {
@@ -147,7 +180,6 @@
 .btn-close svg {
     width: 24px;
     height: 24px;
-    vertical-align: middle;
 }
 
 /* Compact Section (Left Panel - always visible) */

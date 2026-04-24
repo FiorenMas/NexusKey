@@ -3,6 +3,7 @@
 
 #include "HotkeyManager.h"
 #include "HookEngine.h"  // NEXUSKEY_EXTRA_INFO tag
+#include "core/CrashLog.h"
 #include "core/Debug.h"
 
 namespace NextKey {
@@ -88,100 +89,106 @@ void HotkeyManager::InjectDummyKey() noexcept {
 }
 
 LRESULT CALLBACK HotkeyManager::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    HotkeyManager* inst = s_instance.load(std::memory_order_relaxed);
-    if (nCode != HC_ACTION || !inst) {
-        return CallNextHookEx(nullptr, nCode, wParam, lParam);
-    }
+    try {
+        HotkeyManager* inst = s_instance.load(std::memory_order_relaxed);
+        if (nCode != HC_ACTION || !inst) {
+            return CallNextHookEx(nullptr, nCode, wParam, lParam);
+        }
 
-    auto& self = *inst;
-    auto* pKey = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        auto& self = *inst;
+        auto* pKey = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
 
-    // Pass through our own injected dummy events untouched.
-    if (pKey->dwExtraInfo == HookEngine::NEXUSKEY_EXTRA_INFO) {
-        return CallNextHookEx(nullptr, nCode, wParam, lParam);
-    }
+        // Pass through our own injected dummy events untouched.
+        if (pKey->dwExtraInfo == HookEngine::NEXUSKEY_EXTRA_INFO) {
+            return CallNextHookEx(nullptr, nCode, wParam, lParam);
+        }
 
-    const bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
-    const bool isUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
-    const DWORD vk = pKey->vkCode;
+        const bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+        const bool isUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+        const DWORD vk = pKey->vkCode;
 
-    const bool isCtrl = (vk == VK_LCONTROL || vk == VK_RCONTROL);
-    const bool isShift = (vk == VK_LSHIFT || vk == VK_RSHIFT);
-    const bool isAlt = (vk == VK_LMENU || vk == VK_RMENU);
-    const bool isWin = (vk == VK_LWIN || vk == VK_RWIN);
-    const bool isModifier = isCtrl || isShift || isAlt || isWin;
+        const bool isCtrl = (vk == VK_LCONTROL || vk == VK_RCONTROL);
+        const bool isShift = (vk == VK_LSHIFT || vk == VK_RSHIFT);
+        const bool isAlt = (vk == VK_LMENU || vk == VK_RMENU);
+        const bool isWin = (vk == VK_LWIN || vk == VK_RWIN);
+        const bool isModifier = isCtrl || isShift || isAlt || isWin;
 
-    // Snapshot pre-update state so modifier-only release checks see the modifier
-    // as "still held" (match the original per-modifier semantics).
-    const bool preCtrl = self.modCtrlDown_;
-    const bool preShift = self.modShiftDown_;
-    const bool preAlt = self.modAltDown_;
-    const bool preWin = self.modWinDown_;
-    const bool preOtherKey = self.otherKeyPressed_;
+        // Snapshot pre-update state so modifier-only release checks see the modifier
+        // as "still held" (match the original per-modifier semantics).
+        const bool preCtrl = self.modCtrlDown_;
+        const bool preShift = self.modShiftDown_;
+        const bool preAlt = self.modAltDown_;
+        const bool preWin = self.modWinDown_;
+        const bool preOtherKey = self.otherKeyPressed_;
 
-    // Update modifier state. Reset otherKeyPressed_ on modifier down-transition.
-    if (isCtrl) {
-        if (isDown && !self.modCtrlDown_) { self.modCtrlDown_ = true; self.otherKeyPressed_ = false; }
-        else if (isUp) self.modCtrlDown_ = false;
-    } else if (isShift) {
-        if (isDown && !self.modShiftDown_) { self.modShiftDown_ = true; self.otherKeyPressed_ = false; }
-        else if (isUp) self.modShiftDown_ = false;
-    } else if (isAlt) {
-        if (isDown && !self.modAltDown_) { self.modAltDown_ = true; self.otherKeyPressed_ = false; }
-        else if (isUp) self.modAltDown_ = false;
-    } else if (isWin) {
-        if (isDown && !self.modWinDown_) { self.modWinDown_ = true; self.otherKeyPressed_ = false; }
-        else if (isUp) self.modWinDown_ = false;
-    } else if (isDown) {
-        self.otherKeyPressed_ = true;
-    }
+        // Update modifier state. Reset otherKeyPressed_ on modifier down-transition.
+        if (isCtrl) {
+            if (isDown && !self.modCtrlDown_) { self.modCtrlDown_ = true; self.otherKeyPressed_ = false; }
+            else if (isUp) self.modCtrlDown_ = false;
+        } else if (isShift) {
+            if (isDown && !self.modShiftDown_) { self.modShiftDown_ = true; self.otherKeyPressed_ = false; }
+            else if (isUp) self.modShiftDown_ = false;
+        } else if (isAlt) {
+            if (isDown && !self.modAltDown_) { self.modAltDown_ = true; self.otherKeyPressed_ = false; }
+            else if (isUp) self.modAltDown_ = false;
+        } else if (isWin) {
+            if (isDown && !self.modWinDown_) { self.modWinDown_ = true; self.otherKeyPressed_ = false; }
+            else if (isUp) self.modWinDown_ = false;
+        } else if (isDown) {
+            self.otherKeyPressed_ = true;
+        }
 
-    // Strict XOR: required modifiers must be held AND non-required modifiers
-    // must NOT be held. Prevents Alt+Z hotkey from firing on Ctrl+Alt+Z.
-    auto matchCombo = [&](const HotkeyConfig& cfg) noexcept {
-        return cfg.ModifiersMatch(self.modCtrlDown_, self.modShiftDown_,
-                                  self.modAltDown_, self.modWinDown_);
-    };
+        // Strict XOR: required modifiers must be held AND non-required modifiers
+        // must NOT be held. Prevents Alt+Z hotkey from firing on Ctrl+Alt+Z.
+        auto matchCombo = [&](const HotkeyConfig& cfg) noexcept {
+            return cfg.ModifiersMatch(self.modCtrlDown_, self.modShiftDown_,
+                                      self.modAltDown_, self.modWinDown_);
+        };
 
-    auto matchModifierOnlyRelease = [&](const HotkeyConfig& cfg) noexcept {
-        return cfg.ModifiersMatch(preCtrl, preShift, preAlt, preWin);
-    };
+        auto matchModifierOnlyRelease = [&](const HotkeyConfig& cfg) noexcept {
+            return cfg.ModifiersMatch(preCtrl, preShift, preAlt, preWin);
+        };
 
-    std::lock_guard lk(self.slotsMutex_);
+        std::lock_guard lk(self.slotsMutex_);
 
-    // ─── Combo hotkey: target key DOWN fires, UP is eaten ───
-    if (!isModifier && (isDown || isUp)) {
-        for (auto& slot : self.slots_) {
-            if (slot.vkCached == 0) continue;  // Modifier-only slot
-            if (vk != static_cast<DWORD>(slot.vkCached)) continue;
+        // ─── Combo hotkey: target key DOWN fires, UP is eaten ───
+        if (!isModifier && (isDown || isUp)) {
+            for (auto& slot : self.slots_) {
+                if (slot.vkCached == 0) continue;  // Modifier-only slot
+                if (vk != static_cast<DWORD>(slot.vkCached)) continue;
 
-            if (isDown) {
-                if (slot.comboKeyDown) return 1;  // Eat auto-repeat
-                if (matchCombo(slot.config)) {
-                    slot.comboKeyDown = true;
+                if (isDown) {
+                    if (slot.comboKeyDown) return 1;  // Eat auto-repeat
+                    if (matchCombo(slot.config)) {
+                        slot.comboKeyDown = true;
+                        if (slot.callback) slot.callback();
+                        if (slot.config.alt || slot.config.win) InjectDummyKey();
+                        return 1;  // Eat DOWN
+                    }
+                } else {  // isUp
+                    if (slot.comboKeyDown) {
+                        slot.comboKeyDown = false;
+                        return 1;  // Eat matching UP
+                    }
+                }
+            }
+        }
+
+        // ─── Modifier-only hotkey: fires on modifier UP if no non-modifier was pressed ───
+        if (isModifier && isUp && !preOtherKey) {
+            for (auto& slot : self.slots_) {
+                if (slot.vkCached != 0) continue;  // Combo slot
+                const auto& c = slot.config;
+                if (!c.HasAny()) continue;  // Empty config would match everything
+                if (matchModifierOnlyRelease(c)) {
                     if (slot.callback) slot.callback();
-                    if (slot.config.alt || slot.config.win) InjectDummyKey();
-                    return 1;  // Eat DOWN
-                }
-            } else {  // isUp
-                if (slot.comboKeyDown) {
-                    slot.comboKeyDown = false;
-                    return 1;  // Eat matching UP
                 }
             }
         }
-    }
-
-    // ─── Modifier-only hotkey: fires on modifier UP if no non-modifier was pressed ───
-    if (isModifier && isUp && !preOtherKey) {
-        for (auto& slot : self.slots_) {
-            if (slot.vkCached != 0) continue;  // Combo slot
-            const auto& c = slot.config;
-            if (!c.HasAny()) continue;  // Empty config would match everything
-            if (matchModifierOnlyRelease(c)) {
-                if (slot.callback) slot.callback();
-            }
-        }
+    } catch (const std::exception& e) {
+        CrashLog(L"HotkeyManager::LowLevelKeyboardProc", e.what());
+    } catch (...) {
+        CrashLog(L"HotkeyManager::LowLevelKeyboardProc", "(non-std exception)");
     }
 
     return CallNextHookEx(nullptr, nCode, wParam, lParam);

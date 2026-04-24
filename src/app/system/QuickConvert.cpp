@@ -7,6 +7,8 @@
 #include "helpers/AppHelpers.h"
 #include "core/engine/CodeTableConverter.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
+#include <exception>
 #include <functional>
 #include <thread>
 
@@ -89,6 +91,7 @@ void QuickConvert::Execute() {
             ~AutoReset() { flag = false; }
         } resetter{isRunning_};
 
+        try {
         QC_LOG(L"=== QuickConvert::Execute started ===");
 
         // 1a. Capture state IMMEDIATELY before waiting for modifiers 
@@ -265,8 +268,19 @@ void QuickConvert::Execute() {
     if (config_.alertDone && toastMsg) {
         std::wstring msg(toastMsg);
         std::thread([msg]() {
-            ToastPopup::Show(msg, 1500);
+            try {
+                ToastPopup::Show(msg, 1500);
+            } catch (const std::exception& e) {
+                NextKey::CrashLog(L"QuickConvert::ToastThread", e.what());
+            } catch (...) {
+                NextKey::CrashLog(L"QuickConvert::ToastThread", "(non-std exception)");
+            }
         }).detach();
+    }
+    } catch (const std::exception& e) {
+        NextKey::CrashLog(L"QuickConvert::Execute::thread", e.what());
+    } catch (...) {
+        NextKey::CrashLog(L"QuickConvert::Execute::thread", "(non-std exception)");
     }
     }).detach();
 }

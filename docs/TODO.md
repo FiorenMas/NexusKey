@@ -1,5 +1,50 @@
 # TODO
 
+## Outlook "Anh em" Fix — Verify Still Needed (2026-04-23)
+
+Issue #97 originally reported "Anh em" → "An hem" in Outlook 2016. Fix landed
+in commits `8a060bb` (try fix anh em) + `e1dab42` (finalize) — adds
+`isOutlookApp_` flag that disables passthrough for Outlook and forces the
+SendInput VK_PACKET path (`src/app/system/HookEngine.cpp:1188`, detection at
+`:2165-2167`).
+
+Reporter `zenfas` then commented on v2.1.23 (2026-04-23):
+> Tắt bộ gõ vẫn lỗi, lỗi này nằm ở Outlook
+
+i.e. the bug reproduces **with the IME turned off** — consistent with Outlook
+AutoCorrect rewriting "Anh em" → "An hem" on its own (Unikey users report the
+same symptom). Issue now CLOSED.
+
+### Two overlapping bugs, same symptom — disambiguate before reverting
+
+1. **Outlook AutoCorrect** (what zenfas likely saw after retesting): Outlook
+   rewrites the text itself; reproduces with IME off; nothing we can fix.
+2. **Outlook RichEdit passthrough quirk** (what the fix actually targets):
+   physical Shift+letter followed by more chars drops the trailing char of
+   the previous word when passthrough is used. This is what was originally
+   reproduced when the fix was written.
+
+### Verification steps before deciding to revert
+
+- [ ] In Outlook: File → Options → Mail → Spelling & AutoCorrect → disable
+  "Replace text as you type" + "Capitalize first letter of sentences".
+- [ ] Temp build with `isOutlookApp_ = false` (comment out the assignment at
+  `src/app/system/HookEngine.cpp:2166`). Leave `needBaitChar_` alone — that's
+  the Excel-like BS path, orthogonal to passthrough.
+- [ ] Type "Anh em" in a new Outlook mail with IME on:
+    - Still "An hem" → passthrough quirk real → **keep fix**.
+    - Correct "Anh em" → only AutoCorrect was at fault → **safe to revert**
+      the `isOutlookApp_` passthrough gate (reduces SendInput overhead on
+      every Outlook keystroke).
+
+Revert scope if step 3 comes back clean: the `isOutlookApp_` field
+(`HookEngine.h:223`), the passthrough gate line (`HookEngine.cpp:1188`), and
+the assignment/reset (`:2143`, `:2166`). Keep `needBaitChar_` for Outlook and
+the `TryEditMessagePaste` redraw hardening from `e1dab42` — both are
+independent wins.
+
+---
+
 ## Macro Case-Matching + Multi-word Macros — Follow-ups (2026-04-22)
 
 Landed: issue #98 fix (case-insensitive match for all-lowercase keys, strict for

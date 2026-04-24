@@ -19,6 +19,7 @@ var STRINGS = {
 
         // ── Settings dialog ──
         "s.pin": "Pin to top",
+        "s.admin_running": "Running as Administrator",
         "s.input_method": "Input Method",
         "s.code_table": "Code Table",
         "s.switch_key": "Switch Key",
@@ -79,6 +80,11 @@ var STRINGS = {
         "s.desktop_shortcut": "Create desktop shortcut",
         "s.bg_opacity": "Background opacity",
         "s.icon_style": "Customize icon",
+        "s.icon_style_color": "Default color",
+        "s.icon_style_dark": "Dark",
+        "s.icon_style_light": "Light",
+        "s.icon_style_custom": "Custom",
+        "s.icon_style_auto": "Auto",
         "s.english_ui": "English interface",
         "s.english_ui_tooltip": "Switch UI, menus, and notifications to English",
         "s.force_light_theme": "Always use light theme",

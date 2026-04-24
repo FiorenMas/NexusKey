@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #include "ClassicIconColorDialog.h"
+#include "core/CrashLog.h"
 #include <commdlg.h>
+#include <exception>
 #include <windowsx.h>
 
 namespace NextKey::Classic {
@@ -187,7 +189,7 @@ int ClassicIconColorDialog::Dpi(int value) const noexcept {
 
 // ════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicIconColorDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicIconColorDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicIconColorDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -260,6 +262,12 @@ LRESULT CALLBACK ClassicIconColorDialog::WndProc(HWND hwnd, UINT msg, WPARAM wPa
             return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicIconColorDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicIconColorDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

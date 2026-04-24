@@ -3,10 +3,12 @@
 
 #include "ClassicSpellExclusionsDialog.h"
 #include "core/config/ConfigManager.h"
+#include "core/CrashLog.h"
 #include "app/helpers/AppHelpers.h"
 
 #include <windowsx.h>
 #include <algorithm>
+#include <exception>
 
 namespace NextKey::Classic {
 
@@ -221,7 +223,7 @@ int ClassicSpellExclusionsDialog::Dpi(int value) const noexcept {
 // Window procedure
 // ════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicSpellExclusionsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicSpellExclusionsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicSpellExclusionsDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -290,6 +292,12 @@ LRESULT CALLBACK ClassicSpellExclusionsDialog::WndProc(HWND hwnd, UINT msg, WPAR
             return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicSpellExclusionsDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicSpellExclusionsDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

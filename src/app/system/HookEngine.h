@@ -14,8 +14,11 @@
 #include <Windows.h>
 #include <functional>
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -161,6 +164,9 @@ private:
     void ClearWordState();
 
     [[nodiscard]] static bool IsTrayOrTaskbarWindow(HWND hwnd) noexcept;
+    // WebView2 host detection. Cache is positive-only (see .cpp for rationale).
+    // REQUIRES: stateMutex_ held by caller.
+    [[nodiscard]] bool IsWebView2App(HWND topLevel, const std::wstring& exeFullPath) noexcept;
     void NotifyModeChange() noexcept;  // Fire modeChangeCallback_ with effective mode
     bool VerifyExcludedState();        // Check if foreground is still excluded; clears stale flag if not
     void OnFocusChanged(HWND triggerHwnd = nullptr);
@@ -216,6 +222,7 @@ private:
     bool isTsfApp_ = false;       // cached: is current foreground app in TSF list?
     bool isConsoleApp_ = false;   // cached: is current foreground app a console emulator?
     bool isElectronApp_ = false;  // cached: Electron/Qt but NOT console (skipEmptyChar_ && !isConsoleApp_)
+    std::unordered_set<std::wstring> webView2PositiveCache_;  // full exe path → known WebView2 host (positive-only; see IsWebView2App)
     bool skipEmptyChar_ = false;  // Skip U+202F for Qt/Electron and Console apps
     bool needBaitChar_ = false;   // Apps with autocomplete/suggest need U+202F bait before BS
     bool useClipboardPaste_ = false;  // VB6 and legacy ANSI-internal apps need clipboard paste
@@ -280,6 +287,23 @@ private:
     HWINEVENTHOOK focusHook_ = nullptr;     // EVENT_SYSTEM_FOREGROUND
     HWINEVENTHOOK minimizeHook_ = nullptr;  // EVENT_SYSTEM_MINIMIZEEND
     UINT_PTR focusPollTimer_ = 0;          // 200ms PID poll — catches missed/phantom focus events
+
+    // Dedicated hook thread: owns keyboardHook_ + mouseHook_ and runs its own
+    // GetMessage pump so LL hook callbacks never block on the main (UI) thread's
+    // message queue. Win10 silently removes LL hooks whose installer-thread pump
+    // can't service hook events within LowLevelHooksTimeout (max 1000ms). Sciter
+    // rendering, SharedState lock contention, and config reloads on main were
+    // causing that — isolating the hook thread fixes it.
+    std::thread hookThread_;
+    DWORD hookThreadId_ = 0;                       // GetCurrentThreadId() of hookThread_ (for PostThreadMessage)
+    std::atomic<bool> hookThreadReady_{false};     // true once hooks installed (or failed)
+    std::mutex hookStartMutex_;                    // pairs with hookStartCv_ for handshake
+    std::condition_variable hookStartCv_;
+    HINSTANCE cachedHInstance_ = nullptr;          // captured in Start(), used by HookThreadProc
+    // Recursive: main-thread API methods (Start, ApplyConfig, etc.) call each other
+    // while holding the lock. Callback on hook thread acquires for brief read-modify.
+    mutable std::recursive_mutex stateMutex_;
+    void HookThreadProc();                         // runs on hookThread_
 
     // Modifier tracking state (for double-Alt and layout change detection)
     bool modCtrlDown_ = false;

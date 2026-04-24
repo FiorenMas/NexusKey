@@ -80,6 +80,9 @@ enum class StringId : uint16_t {
     IMPORT_FILE_OPEN_FAILED,
     EXPORT_FILE_WRITE_FAILED,
 
+    // Admin restart
+    ADMIN_DEELEVATION_FAILED,
+
     _COUNT
 };
 

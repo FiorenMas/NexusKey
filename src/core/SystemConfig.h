@@ -13,7 +13,8 @@ enum class IconStyle : uint8_t {
     Color = 0,   // Default colored icons (V=pink, E=blue)
     Dark = 1,    // White icons (for dark taskbar)
     Light = 2,   // Black icons (for light taskbar)
-    Custom = 3   // User-selected custom colors
+    Custom = 3,  // User-selected custom colors
+    Auto = 4     // Follow Windows taskbar theme (SystemUsesLightTheme)
 };
 
 /// Default icon colors (COLORREF format: 0x00BBGGRR)
@@ -37,7 +38,7 @@ struct SystemConfig {
 
 
     // Icon customization
-    uint8_t iconStyle = 0;         // IconStyle enum (0=Color, 1=Dark, 2=Light, 3=Custom)
+    uint8_t iconStyle = 0;         // IconStyle enum (0=Color, 1=Dark, 2=Light, 3=Custom, 4=Auto)
     uint32_t customColorV = 0;     // Custom V color (COLORREF, 0 = use default)
     uint32_t customColorE = 0;     // Custom E color (COLORREF, 0 = use default)
 

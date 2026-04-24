@@ -6,8 +6,10 @@
 
 #include "FloatingIcon.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
 
 #include <cmath>
+#include <exception>
 #include <windowsx.h>  // GET_X_LPARAM, GET_Y_LPARAM
 
 namespace NextKey {
@@ -276,7 +278,7 @@ void FloatingIcon::ApplyBitmap() noexcept {
     ReleaseDC(nullptr, hdcScreen);
 }
 
-LRESULT CALLBACK FloatingIcon::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK FloatingIcon::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     switch (msg) {
     case WM_NCHITTEST: {
         // Hit-test: only the circle area is draggable, rest is click-through
@@ -320,6 +322,12 @@ LRESULT CALLBACK FloatingIcon::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    CrashLog(L"FloatingIcon::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    CrashLog(L"FloatingIcon::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

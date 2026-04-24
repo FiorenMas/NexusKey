@@ -31,6 +31,31 @@ bool IsWindowsDarkMode() noexcept {
     return value == 0;
 }
 
+bool IsTaskbarDark() noexcept {
+    HKEY hKey;
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    DWORD type = 0;
+    bool found = false;
+
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        // SystemUsesLightTheme was added in Win10 1903. On older builds the value
+        // is absent — fall back to the app theme so behavior stays sensible.
+        // Also require REG_DWORD: a tampered/corrupt value of another type would
+        // otherwise feed garbage bytes into `value`.
+        if (RegQueryValueExW(hKey, L"SystemUsesLightTheme", nullptr, &type,
+                             reinterpret_cast<LPBYTE>(&value), &size) == ERROR_SUCCESS
+            && type == REG_DWORD && size == sizeof(value)) {
+            found = true;
+        }
+        RegCloseKey(hKey);
+    }
+
+    return found ? (value == 0) : IsWindowsDarkMode();
+}
+
 bool IsWindows11OrGreater() noexcept {
     // Cache result — OS version doesn't change at runtime, and this is called
     // frequently (e.g., per WM_NCHITTEST in handleWindowDrag).

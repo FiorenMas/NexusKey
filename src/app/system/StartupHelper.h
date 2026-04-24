@@ -10,6 +10,17 @@
 #include <Windows.h>
 #include <ShlObj.h>
 #include <shellapi.h>
+#include <exdisp.h>       // IShellWindows
+// Windows.h defines `ShellExecute` as a macro aliasing `ShellExecuteA/W`.
+// If the macro is active when <shldisp.h> is preprocessed, MIDL-declared
+// COM method `IShellDispatch2::ShellExecute` gets renamed at header time,
+// breaking direct calls. Undo the macro across the interface declaration.
+#pragma push_macro("ShellExecute")
+#undef ShellExecute
+#include <shldisp.h>      // IShellFolderViewDual, IShellDispatch2
+#pragma pop_macro("ShellExecute")
+#include <servprov.h>     // IServiceProvider
+#include <memory>
 #include <string>
 #include "UpdateSecurity.h"
 #include "core/config/ConfigManager.h"
@@ -30,6 +41,39 @@ inline constexpr const wchar_t* STARTUP_TASK_NAME = L"NexusKey";
 [[nodiscard]] inline bool IsRunningAsAdmin() noexcept {
     return IsUserAnAdmin() != FALSE;
 }
+
+/// Token passed in cmdline when the app is spawned by an admin-mode restart
+/// (either self-elevation or toggle-driven elevation/de-elevation). The new
+/// instance uses this as a signal to wait on the single-instance mutex rather
+/// than exit immediately when the old instance still holds it.
+inline constexpr const wchar_t* ADMIN_RESTART_FLAG = L"--admin-restart";
+
+/// Whole-word cmdline flag match: `flag` must be preceded by start-of-string
+/// or whitespace, and followed by whitespace or end-of-string. Guards against
+/// substring matches (e.g. `--admin-restart` false-positive on a future flag
+/// like `--admin-restart-dry-run`).
+[[nodiscard]] inline bool HasCmdlineFlag(LPCWSTR cmdLine, LPCWSTR flag) noexcept {
+    if (!cmdLine || !flag) return false;
+    const size_t flagLen = wcslen(flag);
+    if (flagLen == 0) return false;
+    const wchar_t* p = cmdLine;
+    while ((p = wcsstr(p, flag)) != nullptr) {
+        const bool leftOk = (p == cmdLine) || (p[-1] == L' ' || p[-1] == L'\t');
+        const wchar_t after = p[flagLen];
+        const bool rightOk = (after == L'\0' || after == L' ' || after == L'\t');
+        if (leftOk && rightOk) return true;
+        p += flagLen;  // skip past this candidate and keep searching
+    }
+    return false;
+}
+
+/// Result of an admin-mode restart attempt.
+enum class AdminRestartResult {
+    NoRestartNeeded,    ///< Current elevation already matches config — nothing to do
+    Restarting,         ///< New instance launched — caller should exit this process
+    UacDenied,          ///< User cancelled UAC prompt for elevation; config reverted
+    DeElevationFailed,  ///< Shell dispatch unavailable (no explorer, session 0, …)
+};
 
 /// Get the full path to the current executable (quoted)
 [[nodiscard]] inline std::wstring GetQuotedExePath() {
@@ -299,6 +343,129 @@ inline void SetDesktopShortcut(bool enable) {
     return false;
 }
 
+/// Launch `exePath` (with optional `params`) via the shell's dispatch.
+/// Because explorer.exe runs at medium integrity, `ShellExecute` through its
+/// dispatch produces a non-elevated child even when the caller is elevated.
+/// Used to de-elevate when the user turns OFF "Run as Admin" while the app is
+/// currently running with admin rights.
+///
+/// Returns false on any failure (session 0 with no shell, explorer killed,
+/// COM failure, etc.). Initializes COM on the calling thread if needed.
+///
+/// Reference: Raymond Chen, "How can I launch an unelevated process from my
+/// elevated process?" (https://devblogs.microsoft.com/oldnewthing/20131118-00/).
+[[nodiscard]] inline bool LaunchViaShellUnelevated(const wchar_t* exePath,
+                                                    const wchar_t* params) noexcept {
+    // RAII: COM uninit happens AFTER all COM unique_ptrs destruct (declared below,
+    // so they destruct first). Pairs S_OK/S_FALSE with CoUninitialize.
+    struct ComGuard {
+        bool owned;
+        ComGuard() noexcept {
+            HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            owned = (hr == S_OK || hr == S_FALSE);
+        }
+        ~ComGuard() noexcept { if (owned) CoUninitialize(); }
+        ComGuard(const ComGuard&) = delete;
+        ComGuard& operator=(const ComGuard&) = delete;
+    } comGuard;
+
+    auto release = [](IUnknown* p) noexcept { if (p) p->Release(); };
+
+    IShellWindows* shellWindowsRaw = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER,
+                                  IID_IShellWindows,
+                                  reinterpret_cast<void**>(&shellWindowsRaw))) ||
+        !shellWindowsRaw) {
+        return false;
+    }
+    std::unique_ptr<IShellWindows, decltype(release)> shellWindows(shellWindowsRaw, release);
+
+    VARIANT vLoc = {};   vLoc.vt = VT_I4;   vLoc.lVal = CSIDL_DESKTOP;
+    VARIANT vEmpty = {};
+    long hwnd = 0;
+    IDispatch* dispRaw = nullptr;
+    if (FAILED(shellWindows->FindWindowSW(&vLoc, &vEmpty, SWC_DESKTOP, &hwnd,
+                                            SWFO_NEEDDISPATCH, &dispRaw)) ||
+        !dispRaw) {
+        return false;
+    }
+    std::unique_ptr<IDispatch, decltype(release)> disp(dispRaw, release);
+
+    IServiceProvider* providerRaw = nullptr;
+    if (FAILED(disp->QueryInterface(IID_IServiceProvider,
+                                      reinterpret_cast<void**>(&providerRaw))) ||
+        !providerRaw) {
+        return false;
+    }
+    std::unique_ptr<IServiceProvider, decltype(release)> provider(providerRaw, release);
+
+    IShellBrowser* browserRaw = nullptr;
+    if (FAILED(provider->QueryService(SID_STopLevelBrowser, IID_IShellBrowser,
+                                        reinterpret_cast<void**>(&browserRaw))) ||
+        !browserRaw) {
+        return false;
+    }
+    std::unique_ptr<IShellBrowser, decltype(release)> browser(browserRaw, release);
+
+    IShellView* viewRaw = nullptr;
+    if (FAILED(browser->QueryActiveShellView(&viewRaw)) || !viewRaw) {
+        return false;
+    }
+    std::unique_ptr<IShellView, decltype(release)> view(viewRaw, release);
+
+    IDispatch* viewDispRaw = nullptr;
+    if (FAILED(view->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch,
+                                     reinterpret_cast<void**>(&viewDispRaw))) ||
+        !viewDispRaw) {
+        return false;
+    }
+    std::unique_ptr<IDispatch, decltype(release)> viewDisp(viewDispRaw, release);
+
+    IShellFolderViewDual* folderRaw = nullptr;
+    if (FAILED(viewDisp->QueryInterface(IID_IShellFolderViewDual,
+                                           reinterpret_cast<void**>(&folderRaw))) ||
+        !folderRaw) {
+        return false;
+    }
+    std::unique_ptr<IShellFolderViewDual, decltype(release)> folder(folderRaw, release);
+
+    IDispatch* appRaw = nullptr;
+    if (FAILED(folder->get_Application(&appRaw)) || !appRaw) {
+        return false;
+    }
+    std::unique_ptr<IDispatch, decltype(release)> app(appRaw, release);
+
+    // We only need IDispatch::Invoke — skip querying IShellDispatch2 entirely.
+    // SDK versions disagree on whether IShellDispatch2 declares `ShellExecute`
+    // as a direct C++ method (some ship only the IDispatch dual path). Going
+    // through `Invoke` via GetIDsOfNames works on every SDK + every Windows.
+
+    // IDispatch::Invoke receives arguments in REVERSE declaration order.
+    // ShellExecute signature: (File, vArgs, vDir, vVerb, vShow).
+    VARIANT invokeArgs[5] = {};
+    invokeArgs[0].vt = VT_I4;   invokeArgs[0].lVal    = SW_SHOWNORMAL;     // vShow
+    invokeArgs[1].vt = VT_BSTR; invokeArgs[1].bstrVal = SysAllocString(L"open");
+    invokeArgs[2].vt = VT_BSTR; invokeArgs[2].bstrVal = SysAllocString(L"");
+    invokeArgs[3].vt = VT_BSTR; invokeArgs[3].bstrVal = SysAllocString(params ? params : L"");
+    invokeArgs[4].vt = VT_BSTR; invokeArgs[4].bstrVal = SysAllocString(exePath);
+
+    DISPID dispid = 0;
+    LPOLESTR methodName = const_cast<LPOLESTR>(L"ShellExecute");
+    HRESULT hr = app->GetIDsOfNames(IID_NULL, &methodName, 1,
+                                      LOCALE_USER_DEFAULT, &dispid);
+
+    if (SUCCEEDED(hr)) {
+        DISPPARAMS dp = {};
+        dp.cArgs  = 5;
+        dp.rgvarg = invokeArgs;
+        hr = app->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT,
+                          DISPATCH_METHOD, &dp, nullptr, nullptr, nullptr);
+    }
+
+    for (VARIANT& v : invokeArgs) VariantClear(&v);
+    return SUCCEEDED(hr);
+}
+
 /// Self-elevate if config says runAsAdmin but process is not elevated.
 /// Call early in WinMain (before mutex). Returns true if re-launching elevated
 /// (caller should return 0 immediately). Returns false to continue normally.
@@ -312,6 +479,7 @@ inline void SetDesktopShortcut(bool enable) {
     SHELLEXECUTEINFOW sei = { sizeof(sei) };
     sei.lpVerb = L"runas";
     sei.lpFile = exePath;
+    sei.lpParameters = ADMIN_RESTART_FLAG;
     sei.nShow = SW_SHOWNORMAL;
 
     if (ShellExecuteExW(&sei)) {
@@ -327,34 +495,49 @@ inline void SetDesktopShortcut(bool enable) {
     return false;
 }
 
-/// Restart the app with elevation (from main process). Used when admin mode is toggled ON.
-/// Shows UAC via ShellExecuteEx(runas). If denied, reverts config.
-/// Returns true if app should exit (new instance launched).
-/// De-elevation (admin OFF while elevated): not handled here — takes effect on next
-/// manual start, since CreateProcessW from elevated parent inherits the token.
-[[nodiscard]] inline bool RestartWithNewAdminMode() {
+/// Restart the app with a new admin mode. Handles both directions:
+///   - Elevation     (runAsAdmin ON, not yet elevated)   → ShellExecute(runas) + UAC
+///   - De-elevation  (runAsAdmin OFF, currently elevated) → shell-dispatch trick
+/// Returns `AdminRestartResult` describing the outcome so the caller can
+/// decide whether to exit, notify the user, or do nothing.
+[[nodiscard]] inline AdminRestartResult RestartWithNewAdminMode() {
     auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
+    const bool nowElevated = IsRunningAsAdmin();
 
-    if (!sysConfig.runAsAdmin || IsRunningAsAdmin()) {
-        return false;  // Already matching or de-elevating (can't restart non-elevated)
+    if (sysConfig.runAsAdmin == nowElevated) {
+        return AdminRestartResult::NoRestartNeeded;
     }
 
-    // Need elevation — ShellExecute with runas (shows UAC)
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
 
-    SHELLEXECUTEINFOW sei = { sizeof(sei) };
-    sei.lpVerb = L"runas";
-    sei.lpFile = exePath;
-    sei.nShow = SW_SHOWNORMAL;
+    // The new instance uses this flag to wait on the single-instance mutex
+    // for ownership transfer (instead of exiting) — closes the restart race.
+    LPCWSTR params = ADMIN_RESTART_FLAG;
 
-    if (ShellExecuteExW(&sei)) {
-        return true;  // New elevated instance launching — caller should exit
+    if (sysConfig.runAsAdmin && !nowElevated) {
+        // Need elevation — ShellExecute with runas (shows UAC)
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.lpVerb = L"runas";
+        sei.lpFile = exePath;
+        sei.lpParameters = params;
+        sei.nShow = SW_SHOWNORMAL;
+
+        if (ShellExecuteExW(&sei)) {
+            return AdminRestartResult::Restarting;
+        }
+        // UAC denied — revert config so we don't retry on every startup
+        sysConfig.runAsAdmin = false;
+        (void)ConfigManager::SaveSystemConfig(ConfigManager::GetConfigPath(), sysConfig);
+        return AdminRestartResult::UacDenied;
     }
-    // UAC denied — revert config
-    sysConfig.runAsAdmin = false;
-    (void)ConfigManager::SaveSystemConfig(ConfigManager::GetConfigPath(), sysConfig);
-    return false;
+
+    // De-elevation: !runAsAdmin && nowElevated.
+    // CreateProcessW / ShellExecute inherit our elevated token; route through
+    // explorer.exe's dispatch so the child inherits explorer's medium-IL token.
+    return LaunchViaShellUnelevated(exePath, params)
+               ? AdminRestartResult::Restarting
+               : AdminRestartResult::DeElevationFailed;
 }
 
 }  // namespace NextKey

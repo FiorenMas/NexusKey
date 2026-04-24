@@ -10,10 +10,12 @@
 #include "PendingDllApply.h"
 #include "core/config/ConfigManager.h"
 #include "core/Strings.h"
+#include "core/CrashLog.h"
 #include <strsafe.h>
 #include <vector>
 #include <CommCtrl.h>
 #include <uxtheme.h>
+#include <exception>
 #include <thread>
 
 #pragma comment(lib, "comctl32.lib")
@@ -162,20 +164,20 @@ void TrayIcon::RefreshIcon() noexcept {
 
     HICON newIcon = nullptr;
 
-    switch (iconStyle_) {
-        case 1:  // Dark mode (white icons)
+    switch (static_cast<IconStyle>(iconStyle_)) {
+        case IconStyle::Dark:
             newIcon = LoadIconW(hInstance,
                 MAKEINTRESOURCEW(vietnameseMode_ ? IDI_VIET_ON_WHITE : IDI_VIET_OFF_WHITE));
             break;
 
-        case 2:  // Light mode (black icons)
+        case IconStyle::Light:
             newIcon = LoadIconW(hInstance,
                 MAKEINTRESOURCEW(vietnameseMode_ ? IDI_VIET_ON_BLACK : IDI_VIET_OFF_BLACK));
             break;
 
-        case 3: {  // Custom color
-            int baseIcon = vietnameseMode_ ? IDI_VIET_ON : IDI_VIET_OFF;
-            COLORREF color = static_cast<COLORREF>(
+        case IconStyle::Custom: {
+            const int baseIcon = vietnameseMode_ ? IDI_VIET_ON : IDI_VIET_OFF;
+            const COLORREF color = static_cast<COLORREF>(
                 vietnameseMode_
                     ? (customColorV_ != 0 ? customColorV_ : DEFAULT_ICON_COLOR_V)
                     : (customColorE_ != 0 ? customColorE_ : DEFAULT_ICON_COLOR_E));
@@ -186,7 +188,17 @@ void TrayIcon::RefreshIcon() noexcept {
             break;
         }
 
-        default:  // 0 = Color (default)
+        case IconStyle::Auto: {
+            const bool taskbarDark = DarkModeHelper::IsTaskbarDark();
+            const int iconId = taskbarDark
+                ? (vietnameseMode_ ? IDI_VIET_ON_WHITE : IDI_VIET_OFF_WHITE)
+                : (vietnameseMode_ ? IDI_VIET_ON_BLACK : IDI_VIET_OFF_BLACK);
+            newIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(iconId));
+            break;
+        }
+
+        case IconStyle::Color:
+        default:
             newIcon = LoadIconW(hInstance,
                 MAKEINTRESOURCEW(vietnameseMode_ ? IDI_VIET_ON : IDI_VIET_OFF));
             break;
@@ -413,7 +425,7 @@ void TrayIcon::ShowContextMenu() {
     PostMessageW(hwndMessage_, WM_NULL, 0, 0);
 }
 
-bool TrayIcon::ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noexcept {
+bool TrayIcon::ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noexcept try {
     // Deferred V/E mode sync from hook callback or tray click (PostMessage pattern).
     // Settings notification is posted directly from modeChangeCallback_ (1 hop) —
     // no FindWindow needed here.
@@ -479,12 +491,25 @@ bool TrayIcon::ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     // Restart app (admin mode changed in settings)
     if (msg == WM_NEXUSKEY_RESTART && hwnd == hwndMessage_) {
-        if (RestartWithNewAdminMode()) {
-            // New instance launched — exit via menu callback
-            // (TerminateAllSubprocesses is called inside OnMenuCommand::Exit)
-            if (menuCallback_) {
-                menuCallback_(TrayMenuId::Exit);
-            }
+        switch (RestartWithNewAdminMode()) {
+            case AdminRestartResult::Restarting:
+                // New instance launched — exit via menu callback
+                // (TerminateAllSubprocesses is called inside OnMenuCommand::Exit)
+                if (menuCallback_) {
+                    menuCallback_(TrayMenuId::Exit);
+                }
+                break;
+            case AdminRestartResult::DeElevationFailed:
+                // Config was saved as runAsAdmin=false but we couldn't spawn an
+                // unelevated child (no shell). Tell the user to restart manually
+                // so they don't think the toggle silently failed.
+                MessageBoxW(nullptr, S(StringId::ADMIN_DEELEVATION_FAILED),
+                             L"NexusKey", MB_ICONWARNING | MB_OK);
+                break;
+            case AdminRestartResult::NoRestartNeeded:
+            case AdminRestartResult::UacDenied:
+                // Nothing to do; UacDenied already reverted config inside helper.
+                break;
         }
         return true;
     }
@@ -551,26 +576,49 @@ bool TrayIcon::ProcessMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     toggledByClick_ = false;
     ignoreNextLButtonUp_ = false;
     return false;
+} catch (const std::exception& e) {
+    CrashLog(L"TrayIcon::ProcessMessage", e.what());
+    return false;
+} catch (...) {
+    CrashLog(L"TrayIcon::ProcessMessage", "(non-std exception)");
+    return false;
 }
 
 LRESULT CALLBACK TrayIcon::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    // Real-time theme switch for context menus
-    if (msg == WM_SETTINGCHANGE && lParam) {
-        if (wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
-            bool dark = DarkModeHelper::IsWindowsDarkMode();
-            DarkModeHelper::SetWindowDarkMode(hwnd, dark);
+    // Top-level catch: WndProc is kernel-dispatched via KiUserCallbackDispatcher.
+    // An escaping C++ exception becomes STATUS_FATAL_USER_CALLBACK_EXCEPTION
+    // (0xC000041D) and terminates the process — issue #103.
+    try {
+        // Real-time theme switch for context menus + Auto tray icon (issue #104)
+        if (msg == WM_SETTINGCHANGE && lParam) {
+            if (wcscmp(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0) {
+                bool dark = DarkModeHelper::IsWindowsDarkMode();
+                DarkModeHelper::SetWindowDarkMode(hwnd, dark);
+
+                if (g_trayInstance &&
+                    static_cast<IconStyle>(g_trayInstance->iconStyle_) == IconStyle::Auto) {
+                    g_trayInstance->RefreshIcon();
+                    if (g_trayInstance->nid_.hIcon) {
+                        Shell_NotifyIconW(NIM_MODIFY, &g_trayInstance->nid_);
+                    }
+                }
+            }
         }
-    }
 
-    // Handle TaskbarCreated: explorer.exe restarted, re-add our tray icon
-    if (g_trayInstance && g_trayInstance->wmTaskbarCreated_ != 0 &&
-        msg == g_trayInstance->wmTaskbarCreated_) {
-        g_trayInstance->ReAddIcon();
-        return 0;
-    }
+        // Handle TaskbarCreated: explorer.exe restarted, re-add our tray icon
+        if (g_trayInstance && g_trayInstance->wmTaskbarCreated_ != 0 &&
+            msg == g_trayInstance->wmTaskbarCreated_) {
+            g_trayInstance->ReAddIcon();
+            return 0;
+        }
 
-    if (g_trayInstance && g_trayInstance->ProcessMessage(hwnd, msg, wParam, lParam)) {
-        return TRUE;
+        if (g_trayInstance && g_trayInstance->ProcessMessage(hwnd, msg, wParam, lParam)) {
+            return TRUE;
+        }
+    } catch (const std::exception& e) {
+        CrashLog(L"TrayIcon::WndProc", e.what());
+    } catch (...) {
+        CrashLog(L"TrayIcon::WndProc", "(non-std exception)");
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }

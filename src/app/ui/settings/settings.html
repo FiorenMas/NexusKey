@@ -21,6 +21,11 @@
         <!-- Title Bar - spans full width, close button at right corner -->
         <div class="title-bar">
             <span class="title-text">NexusKey v2.0.0</span>
+            <button class="admin-badge" id="admin-badge" title="Đang chạy với quyền Admin" data-i18n-title="s.admin_running">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 256 256">
+                    <path transform="translate(0, -11)" d="M208,40H48A16,16,0,0,0,32,56v58.78c0,89.61,75.82,119.34,91,124.39a15.53,15.53,0,0,0,10,0c15.2-5.05,91-34.78,91-124.39V56A16,16,0,0,0,208,40ZM128,80a32,32,0,1,1-32,32A32,32,0,0,1,128,80Zm0,104a64.08,64.08,0,0,1-57.22-35.24,64,64,0,0,1,114.44,0A64.08,64.08,0,0,1,128,184Z"></path>
+                </svg>
+            </button>
             <!-- Pin Button -->
             <button class="btn-pin" id="btn-pin" title="Ghim lên trên" data-i18n-title="s.pin">
                 <!-- Unpinned icon (shown by default) -->
@@ -637,10 +642,11 @@
                                 <span class="setting-label" data-i18n="s.icon_style">Tuỳ chỉnh icon</span>
                                 <div class="spacer" style="width: *"></div>
                                 <select class="setting-dropdown-small" id="modern-icon">
-                                    <option value="0">Color</option>
-                                    <option value="1">Dark Mode</option>
-                                    <option value="2">Light Mode</option>
-                                    <option value="3">Custom</option>
+                                    <option value="0" data-i18n="s.icon_style_color">Màu mặc định</option>
+                                    <option value="1" data-i18n="s.icon_style_dark">Nền tối</option>
+                                    <option value="2" data-i18n="s.icon_style_light">Nền sáng</option>
+                                    <option value="3" data-i18n="s.icon_style_custom">Tự chọn</option>
+                                    <option value="4" data-i18n="s.icon_style_auto">Tự động</option>
                                 </select>
                             </div>
                             <!-- 6b. Custom icon colors (hidden by default, shown when Custom selected) -->

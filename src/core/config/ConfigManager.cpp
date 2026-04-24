@@ -57,11 +57,28 @@ toml::table LoadExistingToml(const std::string& utf8Path) {
     try { return toml::parse_file(utf8Path); } catch (...) { return {}; }
 }
 
-/// Write TOML table to file
+/// Write TOML table to file atomically
 bool WriteToml(const std::string& utf8Path, const toml::table& tbl) {
-    std::ofstream file(utf8Path);
+    std::string tempPath = utf8Path + ".tmp";
+    std::ofstream file(tempPath);
     if (!file.is_open()) return false;
     file << tbl;
+    file.close();
+    if (file.fail()) return false;
+
+#ifdef _WIN32
+    std::wstring wDest = Utf8ToWide(utf8Path);
+    std::wstring wTemp = Utf8ToWide(tempPath);
+    if (!MoveFileExW(wTemp.c_str(), wDest.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(wTemp.c_str());
+        return false;
+    }
+#else
+    if (std::rename(tempPath.c_str(), utf8Path.c_str()) != 0) {
+        std::remove(tempPath.c_str());
+        return false;
+    }
+#endif
     return true;
 }
 

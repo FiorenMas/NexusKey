@@ -3,10 +3,12 @@
 
 #include "ClassicMacroTableDialog.h"
 #include "core/config/ConfigManager.h"
+#include "core/CrashLog.h"
 #include "app/helpers/AppHelpers.h"
 
 #include <windowsx.h>
 #include <algorithm>
+#include <exception>
 #include <fstream>
 #include <vector>
 
@@ -411,7 +413,7 @@ int ClassicMacroTableDialog::Dpi(int value) const noexcept {
 // WndProc
 // ════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicMacroTableDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicMacroTableDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicMacroTableDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -493,6 +495,12 @@ LRESULT CALLBACK ClassicMacroTableDialog::WndProc(HWND hwnd, UINT msg, WPARAM wP
             return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicMacroTableDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicMacroTableDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

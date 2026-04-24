@@ -4,6 +4,8 @@
 #include "ToastPopup.h"
 #include "DarkModeHelper.h"
 #include "../resource.h"
+#include "core/CrashLog.h"
+#include <exception>
 #include <shellapi.h>
 
 #pragma comment(lib, "shell32.lib")
@@ -196,7 +198,7 @@ static void PaintToast(HWND hwnd, HDC hdc, bool dark) {
     }
 }
 
-LRESULT CALLBACK ToastPopup::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ToastPopup::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     switch (msg) {
         case WM_CREATE: {
             auto* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
@@ -246,6 +248,12 @@ LRESULT CALLBACK ToastPopup::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         default:
             return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
+} catch (const std::exception& e) {
+    CrashLog(L"ToastPopup::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    CrashLog(L"ToastPopup::WndProc", "(non-std exception)");
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 }  // namespace NextKey

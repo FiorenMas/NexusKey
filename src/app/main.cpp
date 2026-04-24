@@ -16,6 +16,7 @@
 #include "core/ipc/SharedState.h"
 #include "core/Strings.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
 
 #include "system/TsfRegistration.h"
 #include "system/StartupHelper.h"
@@ -32,6 +33,7 @@
 #include <Windows.h>
 #include <ole2.h>
 #include <timeapi.h>
+#include <exception>
 #include <memory>
 #include <string>
 #include <atomic>
@@ -81,10 +83,16 @@ static void NotifySettingsMode(bool vietnamese) noexcept {
 static constexpr UINT_PTR TIMER_ID_ICON_POLL = 100;
 
 static void CALLBACK IconPollTimerProc(HWND, UINT, UINT_PTR, DWORD) {
-    uint32_t flags = g_sharedState.ReadFlags();
-    bool vietnamese = (flags & SharedFlags::VIETNAMESE_MODE) != 0;
-    g_trayIcon.SetVietnameseMode(vietnamese);  // no-op if unchanged
-    g_floatingIcon.SetVietnameseMode(vietnamese);  // no-op if unchanged
+    try {
+        uint32_t flags = g_sharedState.ReadFlags();
+        bool vietnamese = (flags & SharedFlags::VIETNAMESE_MODE) != 0;
+        g_trayIcon.SetVietnameseMode(vietnamese);  // no-op if unchanged
+        g_floatingIcon.SetVietnameseMode(vietnamese);  // no-op if unchanged
+    } catch (const std::exception& e) {
+        CrashLog(L"IconPollTimerProc", e.what());
+    } catch (...) {
+        CrashLog(L"IconPollTimerProc", "(non-std exception)");
+    }
 }
 #endif
 
@@ -136,6 +144,14 @@ static void CleanupFloatingIcon() noexcept {
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     g_hInstance = hInstance;
     InstallCursorCrashHandler();  // Restore system cursors if we crash during window picking
+
+    // Last-resort catch: if a C++ throw ever escapes all try/catch at thread boundaries
+    // (shouldn't happen after issue #103 fix, but belt-and-suspenders), log before dying
+    // so the next crash report shows WHAT escaped, not a silent std::terminate.
+    std::set_terminate([]() noexcept {
+        CrashLog(L"std::terminate", "uncaught exception reached std::terminate");
+        std::abort();
+    });
 
     // ═══════════════════════════════════════════════════════════
     // Command-line Router
@@ -229,6 +245,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // Main Process
     // ═══════════════════════════════════════════════════════════
 
+    const bool isAdminRestart = HasCmdlineFlag(lpCmdLine, ADMIN_RESTART_FLAG);
+
     // Self-elevate if "Run as Admin" is enabled but we're not elevated.
     // Must be before mutex — the elevated instance will acquire the mutex instead.
     {
@@ -246,25 +264,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // mutexes — second instance gets ERROR_ACCESS_DENIED instead of ERROR_ALREADY_EXISTS.
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\NexusKey_Main_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        // Another background instance is already running.
-        // If the user has "show on startup" configured, popup the settings dialog of the 
-        // existing instance to indicate the app is active. Otherwise, strictly silent.
-        auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
-        if (sysConfig.showOnStartup) {
-            HWND existingTrayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-            if (existingTrayWnd) {
-                PostMessageW(existingTrayWnd, WM_NEXUSKEY_SHOW_SETTINGS, 0, 0);
-                
-                HWND existingSettings = GetSettingsHwnd();
-                if (existingSettings) {
-                    SetForegroundWindow(existingSettings);
+        if (isAdminRestart) {
+            // Admin-restart path: old instance is in the middle of cleanup.
+            // Wait for ownership transfer (either clean release or WAIT_ABANDONED
+            // if old is killed). This closes the restart race: by the time we
+            // hold the mutex, old has unhooked and released shared resources.
+            DWORD r = WaitForSingleObject(hMutex, 10000);
+            if (r != WAIT_OBJECT_0 && r != WAIT_ABANDONED) {
+                NEXTKEY_LOG(L"Admin-restart: timeout waiting for old instance mutex (r=%lu)", r);
+                CloseHandle(hMutex);
+                return 1;
+            }
+            NEXTKEY_LOG(L"Admin-restart: mutex ownership acquired (%s)",
+                         r == WAIT_ABANDONED ? L"abandoned" : L"released");
+        } else {
+            // Another background instance is already running.
+            // If the user has "show on startup" configured, popup the settings dialog of the
+            // existing instance to indicate the app is active. Otherwise, strictly silent.
+            auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
+            if (sysConfig.showOnStartup) {
+                HWND existingTrayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                if (existingTrayWnd) {
+                    PostMessageW(existingTrayWnd, WM_NEXUSKEY_SHOW_SETTINGS, 0, 0);
+
+                    HWND existingSettings = GetSettingsHwnd();
+                    if (existingSettings) {
+                        SetForegroundWindow(existingSettings);
+                    }
                 }
             }
+
+            NEXTKEY_LOG(L"Another instance is already running. Exiting.");
+            CloseHandle(hMutex);
+            return 0;
         }
-        
-        NEXTKEY_LOG(L"Another instance is already running. Exiting.");
-        CloseHandle(hMutex);
-        return 0;
     }
 
     // Remove any HKCU CLSID override that malware may have planted to hijack TSF DLL loading
@@ -449,35 +482,57 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // Show post-update notification (after tray icon is ready)
     if (updateJustCompleted) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"main::PostUpdateToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::PostUpdateToast::thread", "(non-std exception)");
+            }
         }).detach();
     } else if (updateJustFailed) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"main::UpdateFailedToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::UpdateFailedToast::thread", "(non-std exception)");
+            }
         }).detach();
     }
 
     // Auto-check for updates on startup (background thread, 3s delay)
     if (systemConfig.autoCheckUpdate) {
         std::thread([]() {
-            Sleep(3000);
-            auto info = UpdateChecker::CheckForUpdate();
-            if (info.available) {
-                HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-                if (trayWnd) {
-                    auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
-                    if (pInfo) {
-                        // WndProc returns true (1) on success and takes ownership of pInfo.
-                        // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
-                        if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
-                                          reinterpret_cast<LPARAM>(pInfo))) {
-                            delete pInfo;
+            // URLDownloadToFileW (used by CheckForUpdate) requires COM init on the
+            // calling thread — sibling threads in this file all call it; match them.
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            try {
+                Sleep(3000);
+                auto info = UpdateChecker::CheckForUpdate();
+                if (info.available) {
+                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                    if (trayWnd) {
+                        auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
+                        if (pInfo) {
+                            // WndProc returns true (1) on success and takes ownership of pInfo.
+                            // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
+                            if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
+                                              reinterpret_cast<LPARAM>(pInfo))) {
+                                delete pInfo;
+                            }
                         }
                     }
                 }
+            } catch (const std::exception& e) {
+                CrashLog(L"main::AutoUpdateCheck::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::AutoUpdateCheck::thread", "(non-std exception)");
             }
+            CoUninitialize();
         }).detach();
     }
 
@@ -621,35 +676,57 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // Show post-update notification (after tray icon is ready)
     if (updateJustCompleted) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_SUCCESS), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"main::PostUpdateToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::PostUpdateToast::thread", "(non-std exception)");
+            }
         }).detach();
     } else if (updateJustFailed) {
         std::thread([]() {
-            Sleep(1000);
-            ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            try {
+                Sleep(1000);
+                ToastPopup::Show(S(StringId::UPDATE_INSTALL_FAILED), 3000);
+            } catch (const std::exception& e) {
+                CrashLog(L"main::UpdateFailedToast::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::UpdateFailedToast::thread", "(non-std exception)");
+            }
         }).detach();
     }
 
     // Auto-check for updates on startup (background thread, 3s delay)
     if (systemConfig.autoCheckUpdate) {
         std::thread([]() {
-            Sleep(3000);
-            auto info = UpdateChecker::CheckForUpdate();
-            if (info.available) {
-                HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-                if (trayWnd) {
-                    auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
-                    if (pInfo) {
-                        // WndProc returns true (1) on success and takes ownership of pInfo.
-                        // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
-                        if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
-                                          reinterpret_cast<LPARAM>(pInfo))) {
-                            delete pInfo;
+            // URLDownloadToFileW (used by CheckForUpdate) requires COM init on the
+            // calling thread — sibling threads in this file all call it; match them.
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            try {
+                Sleep(3000);
+                auto info = UpdateChecker::CheckForUpdate();
+                if (info.available) {
+                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                    if (trayWnd) {
+                        auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
+                        if (pInfo) {
+                            // WndProc returns true (1) on success and takes ownership of pInfo.
+                            // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
+                            if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
+                                              reinterpret_cast<LPARAM>(pInfo))) {
+                                delete pInfo;
+                            }
                         }
                     }
                 }
+            } catch (const std::exception& e) {
+                CrashLog(L"main::AutoUpdateCheck::thread", e.what());
+            } catch (...) {
+                CrashLog(L"main::AutoUpdateCheck::thread", "(non-std exception)");
             }
+            CoUninitialize();
         }).detach();
     }
 

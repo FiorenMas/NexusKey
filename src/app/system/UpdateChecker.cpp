@@ -6,6 +6,7 @@
 #include "core/Version.h"
 #include "core/Strings.h"
 #include "core/WinStrings.h"
+#include "core/CrashLog.h"
 
 #include <ole2.h>
 #include <urlmon.h>
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <exception>
 #include <thread>
 #include <memory>
 
@@ -311,9 +313,15 @@ bool UpdateChecker::DownloadWithProgress(HWND parent, const std::wstring& downlo
     auto state = std::make_shared<State>();
 
     std::thread([state, downloadUrl]() {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        state->success = DownloadAndLaunchInstaller(downloadUrl);
-        CoUninitialize();
+        try {
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            state->success = DownloadAndLaunchInstaller(downloadUrl);
+            CoUninitialize();
+        } catch (const std::exception& e) {
+            CrashLog(L"UpdateChecker::DownloadWithProgress::thread", e.what());
+        } catch (...) {
+            CrashLog(L"UpdateChecker::DownloadWithProgress::thread", "(non-std exception)");
+        }
         state->done.store(true, std::memory_order_release);
     }).detach();
 

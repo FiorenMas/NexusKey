@@ -9,11 +9,21 @@
 #include "core/MacroPrefix.h"
 #include "core/ipc/SharedStateManager.h"
 #include "core/Debug.h"
+#include "core/CrashLog.h"
 #include <algorithm>
 #include <cstdio>
+#include <exception>
+#include <tlhelp32.h>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace NextKey {
+
+/// Custom thread message used between OnFocusChanged (sender, main thread)
+/// and HookThreadProc (receiver, hook thread) to re-install LL hooks at
+/// the top of the hook chain. Defined once to avoid duplication.
+static constexpr UINT WM_APP_REINSTALL_HOOKS = WM_APP + 1;
 
 // ═══════════════════════════════════════════════════════════
 // Debug file logger (writes to NexusKey_hook.log next to EXE)
@@ -62,12 +72,14 @@ HookEngine::~HookEngine() {
 }
 
 void HookEngine::CommitPending() {
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     if (engine_ && engine_->Count() > 0) {
         CommitComposition();
     }
 }
 
 void HookEngine::ApplyConfig(const TypingConfig& config) {
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     beepOnSwitch_ = config.beepOnSwitch;
     smartSwitch_ = config.smartSwitch;
     excludeApps_ = config.excludeApps;
@@ -140,17 +152,32 @@ bool HookEngine::Start(HINSTANCE hInstance, const TypingConfig& config,
         }
     }
 
-    // Install low-level keyboard hook (global, all threads)
-    keyboardHook_ = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
+    // Spawn dedicated hook thread that owns keyboardHook_ + mouseHook_ and runs
+    // its own GetMessage pump. This decouples LL hook dispatch from the main/UI
+    // thread (which runs Sciter rendering, SharedState locks, config reloads).
+    // Win10+ silently removes LL hooks whose installer-thread pump can't service
+    // events within LowLevelHooksTimeout (clamped to 1000ms) — keeping the hook
+    // thread minimal + dedicated avoids hitting that deadline.
+    cachedHInstance_ = hInstance;
+    hookThreadReady_.store(false);
+    hookThread_ = std::thread(&HookEngine::HookThreadProc, this);
+
+    // Wait for hook thread to finish installing hooks (or fail). Timeout 5s as
+    // safety — a healthy thread signals within milliseconds.
+    {
+        std::unique_lock<std::mutex> lk(hookStartMutex_);
+        hookStartCv_.wait_for(lk, std::chrono::seconds(5),
+                              [this] { return hookThreadReady_.load(); });
+    }
     if (!keyboardHook_) {
-        NEXTKEY_LOG(L"HookEngine: Failed to install keyboard hook (error: %lu)", GetLastError());
-        HOOK_LOG(L"FAILED to install keyboard hook (error: %lu)", GetLastError());
+        NEXTKEY_LOG(L"HookEngine: Failed to install keyboard hook (hook thread returned without setting keyboardHook_)");
+        HOOK_LOG(L"FAILED to install keyboard hook (hook thread did not signal ready or SetWindowsHookExW failed)");
+        if (hookThread_.joinable()) {
+            if (hookThreadId_) PostThreadMessage(hookThreadId_, WM_QUIT, 0, 0);
+            hookThread_.join();
+        }
         return false;
     }
-
-    // Install mouse hook to reset composition on left click
-    // (handles focus changes within same window, e.g. YouTube video → comment box)
-    mouseHook_ = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, hInstance, 0);
 
     // Install focus change hooks — two separate hooks for exact event targeting
     // (avoids receiving ~20 unrelated events in the 0x0003..0x0017 range).
@@ -183,14 +210,18 @@ void HookEngine::Stop() {
     if (startupMode_ == 2) {  // Remember: persist per-app modes
         SaveEnglishModeAppsIfDirty();
     }
-    if (keyboardHook_) {
-        UnhookWindowsHookEx(keyboardHook_);
-        keyboardHook_ = nullptr;
+    // Ask hook thread to exit (it owns keyboardHook_/mouseHook_ and will
+    // UnhookWindowsHookEx them on the same thread that installed — required by
+    // LL hook semantics). WinEvent hooks + timer stay on main thread.
+    if (hookThread_.joinable()) {
+        if (hookThreadId_) PostThreadMessage(hookThreadId_, WM_QUIT, 0, 0);
+        hookThread_.join();
     }
-    if (mouseHook_) {
-        UnhookWindowsHookEx(mouseHook_);
-        mouseHook_ = nullptr;
-    }
+    keyboardHook_ = nullptr;
+    mouseHook_ = nullptr;
+    hookThreadId_ = 0;
+    hookThreadReady_.store(false);
+
     if (focusHook_) {
         UnhookWinEvent(focusHook_);
         focusHook_ = nullptr;
@@ -214,7 +245,73 @@ void HookEngine::Stop() {
 #endif
 }
 
+void HookEngine::HookThreadProc() {
+    // Dedicated message-pump thread for WH_KEYBOARD_LL + WH_MOUSE_LL. These are
+    // installer-thread-bound — the callback runs on this thread, and Windows
+    // dispatches events via the thread's message queue. Keeping this thread
+    // otherwise idle guarantees the pump stays responsive within the
+    // LowLevelHooksTimeout window (silent-unhook avoidance).
+    hookThreadId_ = GetCurrentThreadId();
+
+    keyboardHook_ = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, cachedHInstance_, 0);
+    if (!keyboardHook_) {
+        HOOK_LOG(L"HookThreadProc: SetWindowsHookExW(WH_KEYBOARD_LL) FAILED err=%lu", GetLastError());
+        // Signal main thread that we tried (but failed) so it can observe
+        // keyboardHook_ == nullptr and abort Start().
+        {
+            std::lock_guard<std::mutex> lk(hookStartMutex_);
+            hookThreadReady_.store(true);
+        }
+        hookStartCv_.notify_one();
+        return;
+    }
+
+    mouseHook_ = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, cachedHInstance_, 0);
+    // Mouse hook is best-effort — proceed even if it fails.
+
+    // Signal main: hooks installed, HHOOKs visible via keyboardHook_/mouseHook_.
+    {
+        std::lock_guard<std::mutex> lk(hookStartMutex_);
+        hookThreadReady_.store(true);
+    }
+    hookStartCv_.notify_one();
+
+    HOOK_LOG(L"HookThreadProc: pump started tid=%lu", hookThreadId_);
+
+    // Message pump. This thread services NOTHING else — no Sciter, no timers,
+    // no SharedState writes — so the LL hook dispatcher stays under timeout.
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_APP_REINSTALL_HOOKS) {
+            if (keyboardHook_) {
+                UnhookWindowsHookEx(keyboardHook_);
+                keyboardHook_ = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, cachedHInstance_, 0);
+            }
+            if (mouseHook_) {
+                UnhookWindowsHookEx(mouseHook_);
+                mouseHook_ = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, cachedHInstance_, 0);
+            }
+            HOOK_LOG(L"HookThreadProc: Hooks reinstalled (top of chain)");
+            continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    // Must unhook on the same thread that installed (MSDN requirement).
+    if (keyboardHook_) {
+        UnhookWindowsHookEx(keyboardHook_);
+        keyboardHook_ = nullptr;
+    }
+    if (mouseHook_) {
+        UnhookWindowsHookEx(mouseHook_);
+        mouseHook_ = nullptr;
+    }
+    HOOK_LOG(L"HookThreadProc: pump exited tid=%lu", hookThreadId_);
+}
+
 void HookEngine::ToggleVietnameseMode() {
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     // Block toggle in excluded apps. Use cached excludedPid_ + foreground PID
     // to distinguish "genuinely in excluded app" from "stale flag after leaving".
     // PID check is cheap (no OpenProcess) and immune to transient tray/taskbar focus.
@@ -266,6 +363,7 @@ void HookEngine::ToggleVietnameseMode() {
 }
 
 void HookEngine::SetCodeTable(CodeTable ct) {
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     // Commit any pending composition before switching
     if (ct != currentCodeTable_ && engine_->Count() > 0) {
         CommitComposition();
@@ -291,6 +389,10 @@ CodeTable HookEngine::GetCodeTable() const noexcept {
 }
 
 void HookEngine::QuickSyncFromSharedState() {
+    // Called from OnFocusChanged (already under lock via WinEventProc/FocusPollTimerProc)
+    // AND from SyncConfigFromSharedState (public API — needs its own lock).
+    // recursive_mutex handles both paths.
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     if (!sharedStatePtr_) return;
 
     // Fast path: skip full struct copy if epoch hasn't changed (single 32-bit read)
@@ -355,6 +457,7 @@ void HookEngine::QuickSyncFromSharedState() {
 }
 
 bool HookEngine::CheckConfigEvent() {
+    std::lock_guard<std::recursive_mutex> _lock(stateMutex_);
     // Legacy path — kept for TSF DLL compatibility. HookEngine uses configGeneration instead.
     if (!configEvent_.IsValid()) {
         configEvent_.Initialize();
@@ -481,85 +584,122 @@ void HookEngine::ReloadFromToml() {
 // ═══════════════════════════════════════════════════════════
 
 LRESULT CALLBACK HookEngine::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    HookEngine* self = s_instance.load(std::memory_order_relaxed);
-    auto* pKey = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+    // Top-level catch: a C++ throw escaping a low-level hook unwinds through
+    // KiUserCallbackDispatcher and Windows raises STATUS_FATAL_USER_CALLBACK_EXCEPTION
+    // (0xC000041D), terminating the process. Swallow + log so the next keystroke
+    // gets a fresh attempt instead of the app silently disappearing.
+    try {
+        HookEngine* self = s_instance.load(std::memory_order_relaxed);
+        auto* pKey = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
 
-    // Always track our own synthetic events regardless of nCode.
-    // When nCode < 0, Windows tells us to pass the message along — but the event
-    // still represents a delivered synthetic that was counted when sent.
-    // Without this, synthEventsPending_ leaks on every nCode < 0 delivery.
-    if (self && pKey->dwExtraInfo == NEXUSKEY_EXTRA_INFO) {
-        HOOK_LOG(L"  PASSTHRU (dwExtraInfo=NK): vk=0x%02X scan=0x%04X flags=0x%08X nCode=%d",
-                 pKey->vkCode, pKey->scanCode, pKey->flags, nCode);
-        if (self->synthEventsPending_ > 0) --self->synthEventsPending_;
-        return CallNextHookEx(nullptr, nCode, wParam, lParam);
-    }
 
-    if (nCode == HC_ACTION && self) {
-        // Skip events while we're sending (safety backup)
-        if (self->sending_) {
-            HOOK_LOG(L"  PASSTHRU (sending_): vk=0x%02X scan=0x%04X flags=0x%08X",
-                     pKey->vkCode, pKey->scanCode, pKey->flags);
+        // Always track our own synthetic events regardless of nCode.
+        // When nCode < 0, Windows tells us to pass the message along — but the event
+        // still represents a delivered synthetic that was counted when sent.
+        // Without this, synthEventsPending_ leaks on every nCode < 0 delivery.
+        if (self && pKey->dwExtraInfo == NEXUSKEY_EXTRA_INFO) {
+            HOOK_LOG(L"  PASSTHRU (dwExtraInfo=NK): vk=0x%02X scan=0x%04X flags=0x%08X nCode=%d",
+                     pKey->vkCode, pKey->scanCode, pKey->flags, nCode);
+            if (self->synthEventsPending_ > 0) --self->synthEventsPending_;
             return CallNextHookEx(nullptr, nCode, wParam, lParam);
         }
 
-        bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
-        bool isUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
-
-        HOOK_LOG(L"KEY vk=0x%02X scan=0x%04X flags=0x%08X %s",
-                 pKey->vkCode, pKey->scanCode, pKey->flags,
-                 isDown ? L"DOWN" : (isUp ? L"UP" : L"OTHER"));
-
-        if (isDown) {
-            if (self->ProcessKeyDown(pKey->vkCode, pKey->scanCode, pKey->flags)) {
-                HOOK_LOG(L"  → EATEN (key-down vk=0x%02X)", pKey->vkCode);
-                return 1;  // Eat the keystroke
+        if (nCode == HC_ACTION && self) {
+            // Skip events while we're sending (safety backup)
+            if (self->sending_) {
+                HOOK_LOG(L"  PASSTHRU (sending_): vk=0x%02X scan=0x%04X flags=0x%08X",
+                         pKey->vkCode, pKey->scanCode, pKey->flags);
+                return CallNextHookEx(nullptr, nCode, wParam, lParam);
             }
-        } else if (isUp) {
-            if (self->ProcessKeyUp(pKey->vkCode, pKey->flags)) {
-                return 1;  // Eat the keystroke
+
+            bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+            bool isUp = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+
+            HOOK_LOG(L"KEY vk=0x%02X scan=0x%04X flags=0x%08X %s",
+                     pKey->vkCode, pKey->scanCode, pKey->flags,
+                     isDown ? L"DOWN" : (isUp ? L"UP" : L"OTHER"));
+
+            // State access below races with main-thread writers (OnFocusChanged,
+            // ApplyConfig, ToggleVietnameseMode, Reload* methods). Brief lock
+            // keeps the critical section on the hook thread — main thread holds
+            // this mutex only for fast state updates, never for Sciter/IO work.
+            std::lock_guard<std::recursive_mutex> _lock(self->stateMutex_);
+
+            if (isDown) {
+                if (self->ProcessKeyDown(pKey->vkCode, pKey->scanCode, pKey->flags)) {
+                    HOOK_LOG(L"  → EATEN (key-down vk=0x%02X)", pKey->vkCode);
+                    return 1;  // Eat the keystroke
+                }
+            } else if (isUp) {
+                if (self->ProcessKeyUp(pKey->vkCode, pKey->flags)) {
+                    return 1;  // Eat the keystroke
+                }
             }
         }
+    } catch (const std::exception& e) {
+        CrashLog(L"HookEngine::LowLevelKeyboardProc", e.what());
+    } catch (...) {
+        CrashLog(L"HookEngine::LowLevelKeyboardProc", "(non-std exception)");
     }
-
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
 void CALLBACK HookEngine::WinEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DWORD, DWORD) {
-    HookEngine* self = s_instance.load(std::memory_order_relaxed);
-    if (!self) return;
+    try {
+        HookEngine* self = s_instance.load(std::memory_order_relaxed);
+        if (!self) return;
 
-    if (event == EVENT_SYSTEM_MINIMIZEEND) {
-        // Window restored from taskbar — re-evaluate focus with the actual foreground window.
-        // Don't use hwnd directly: the restored window may not be foreground yet.
-        HOOK_LOG(L"MINIMIZEEND (hwnd=%p) — re-evaluating focus", hwnd);
-        self->OnFocusChanged(nullptr);  // nullptr → uses GetForegroundWindow()
-        return;
+        // Main-thread writer path — hook thread's callback reads the same state
+        // (engine_, previousComposition_, app-detect flags, currentExe_...).
+        // Lock must cover the engine_->Count() read below and the subsequent
+        // OnFocusChanged() which mutates extensively.
+        std::lock_guard<std::recursive_mutex> _lock(self->stateMutex_);
+
+        if (event == EVENT_SYSTEM_MINIMIZEEND) {
+            // Window restored from taskbar — re-evaluate focus with the actual foreground window.
+            // Don't use hwnd directly: the restored window may not be foreground yet.
+            HOOK_LOG(L"MINIMIZEEND (hwnd=%p) — re-evaluating focus", hwnd);
+            self->OnFocusChanged(nullptr);  // nullptr → uses GetForegroundWindow()
+            return;
+        }
+
+        HOOK_LOG(L"FOCUS changed — resetting composition (engine count=%zu, prev='%s')",
+                 self->engine_->Count(), self->previousComposition_.c_str());
+        self->autoCapState_ = AutoCapState::Idle;
+        self->OnFocusChanged(hwnd);
+    } catch (const std::exception& e) {
+        CrashLog(L"HookEngine::WinEventProc", e.what());
+    } catch (...) {
+        CrashLog(L"HookEngine::WinEventProc", "(non-std exception)");
     }
-
-    HOOK_LOG(L"FOCUS changed — resetting composition (engine count=%zu, prev='%s')",
-             self->engine_->Count(), self->previousComposition_.c_str());
-    self->autoCapState_ = AutoCapState::Idle;
-    self->OnFocusChanged(hwnd);
 }
 
 LRESULT CALLBACK HookEngine::LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode == HC_ACTION && wParam == WM_LBUTTONDOWN) {
-        HookEngine* self = s_instance.load(std::memory_order_relaxed);
-        if (self) {
-            HOOK_LOG(L"MOUSE click — resetting composition (engine count=%zu, prev='%s')",
-                     self->engine_->Count(), self->previousComposition_.c_str());
-            // Always reset, even when engine is idle: commitUndoState_ and commitStack_
-            // may hold a previously committed word. If not cleared here, a click elsewhere
-            // followed by Backspace triggers ReplayCommittedChars() at the new cursor
-            // position — identical to the Ctrl+A bug.
-            self->ResetComposition();
-            // Click may move focus to another control within the same app (no
-            // EVENT_SYSTEM_FOREGROUND fires) — invalidate cache so the next
-            // TryEditMessagePaste re-queries the focused HWND.
-            self->cachedFocusedHwnd_ = nullptr;
-            self->cachedFocusedClass_.clear();
+    try {
+        if (nCode == HC_ACTION && wParam == WM_LBUTTONDOWN) {
+            HookEngine* self = s_instance.load(std::memory_order_relaxed);
+            if (self) {
+                // Mouse callback runs on hook thread — ResetComposition + state
+                // writes below race with main-thread writers. Take the lock.
+                std::lock_guard<std::recursive_mutex> _lock(self->stateMutex_);
+                HOOK_LOG(L"MOUSE click — resetting composition (engine count=%zu, prev='%s')",
+                         self->engine_->Count(), self->previousComposition_.c_str());
+                // Always reset, even when engine is idle: commitUndoState_ and commitStack_
+                // may hold a previously committed word. If not cleared here, a click elsewhere
+                // followed by Backspace triggers ReplayCommittedChars() at the new cursor
+                // position — identical to the Ctrl+A bug.
+                self->ResetComposition();
+                // Click may move focus to another control within the same app (no
+                // EVENT_SYSTEM_FOREGROUND fires) — invalidate cache so the next
+                // TryEditMessagePaste re-queries the focused HWND.
+                self->cachedFocusedHwnd_ = nullptr;
+                self->cachedFocusedClass_.clear();
+            }
         }
+    } catch (const std::exception& e) {
+        CrashLog(L"HookEngine::LowLevelMouseProc", e.what());
+    } catch (...) {
+        CrashLog(L"HookEngine::LowLevelMouseProc", "(non-std exception)");
     }
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
@@ -1765,6 +1905,77 @@ static bool IsKnownElectronExe(const wchar_t* filename) noexcept {
            _wcsnicmp(filename, L"zalo", 4) == 0;         // Zalo PC
 }
 
+// ── Auto-detect WebView2 apps via process inspection ──────────────────
+// Tauri apps (Dorion), Office WebView2 add-ins, and any Win32 app that
+// hosts a WebView2 control needs the Electron input treatment (skip
+// reinjectVk + split dispatch) — Chromium's untrusted-input filter drops
+// the unpaired synthetic VK keydown under some conditions.
+//
+// Two-pass detection:
+//   1. Module check: Win32 apps that load WebView2 inline into the host
+//      process will have `WebView2Loader.dll` or `embeddedbrowserwebview.dll`
+//      loaded. Cheap (~3ms) and catches most hybrid Win32 apps.
+//   2. Child-process check: Tauri v2 + modern WebView2 runtime isolate
+//      the browser into `msedgewebview2.exe` — spawned as a child of the
+//      host. The host itself may not load any WebView2 DLL. Walk the
+//      process table and look for a child with that exe name. Slower
+//      (~5-10ms over ~200 processes), so we only run it as a fallback.
+//
+// Cache strategy: positive-only. Both checks race with WebView2 runtime
+// initialization (Tauri delay-loads on first embed), so a false at app-
+// launch time must not poison subsequent checks.
+//
+// REQUIRES: caller holds stateMutex_ (all call sites go through OnFocusChanged
+// which is always under lock). webView2PositiveCache_ is a plain member and is
+// not independently thread-safe.
+[[nodiscard]] bool HookEngine::IsWebView2App(HWND topLevel, const std::wstring& exeFullPath) noexcept {
+    if (!topLevel || exeFullPath.empty()) return false;
+
+    if (webView2PositiveCache_.count(exeFullPath)) return true;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(topLevel, &pid);
+    if (!pid) return false;
+
+    bool found = false;
+
+    // Pass 1 — loaded modules in the host process.
+    // TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 covers both native + WoW64.
+    // INVALID_HANDLE_VALUE on cross-IL / AppContainer targets → fall through.
+    if (HANDLE modSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+        modSnap != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32W me = { sizeof(me) };
+        for (BOOL ok = Module32FirstW(modSnap, &me); ok; ok = Module32NextW(modSnap, &me)) {
+            if (_wcsicmp(me.szModule, L"WebView2Loader.dll") == 0 ||
+                _wcsicmp(me.szModule, L"embeddedbrowserwebview.dll") == 0) {
+                found = true;
+                break;
+            }
+        }
+        CloseHandle(modSnap);
+    }
+
+    // Pass 2 — `msedgewebview2.exe` spawned as a child process.
+    // Covers modern Tauri where the host doesn't load WebView2 DLLs itself.
+    if (!found) {
+        if (HANDLE procSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            procSnap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W pe = { sizeof(pe) };
+            for (BOOL ok = Process32FirstW(procSnap, &pe); ok; ok = Process32NextW(procSnap, &pe)) {
+                if (pe.th32ParentProcessID == pid &&
+                    _wcsicmp(pe.szExeFile, L"msedgewebview2.exe") == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            CloseHandle(procSnap);
+        }
+    }
+
+    if (found) webView2PositiveCache_.insert(exeFullPath);
+    return found;
+}
+
 // ── Auto-detect Electron by app.asar marker (FUTURE USE) ──────────────
 // Uncomment to replace IsKnownElectronExe() with zero-maintenance detection.
 // Checks if resources/app.asar exists next to the exe — all Electron apps ship this.
@@ -1848,6 +2059,25 @@ std::wstring HookEngine::GetExeNameForHwnd(HWND hwnd) noexcept {
     if (QueryFullProcessImageNameW(hProc, 0, exePath, &size)) {
         const wchar_t* filename = wcsrchr(exePath, L'\\');
         result = ToLowerAscii(filename ? filename + 1 : exePath);
+    }
+    CloseHandle(hProc);
+    return result;
+}
+
+// Returns the full exe path (original case) for the process owning `hwnd`.
+// Empty on failure. Needed by IsWebView2App() to locate sibling DLLs.
+[[nodiscard]] static std::wstring GetExeFullPathForHwnd(HWND hwnd) noexcept {
+    if (!hwnd) return {};
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return {};
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hProc) return {};
+    wchar_t exePath[MAX_PATH] = {};
+    DWORD size = MAX_PATH;
+    std::wstring result;
+    if (QueryFullProcessImageNameW(hProc, 0, exePath, &size)) {
+        result.assign(exePath, size);
     }
     CloseHandle(hProc);
     return result;
@@ -2051,23 +2281,33 @@ void HookEngine::OnLayoutChanged(bool isCompatibleNow) {
 }
 
 void CALLBACK HookEngine::FocusPollTimerProc(HWND, UINT, UINT_PTR, DWORD) {
-    HookEngine* self = s_instance.load(std::memory_order_relaxed);
-    if (!self) return;
-    HWND fg = GetForegroundWindow();
-    if (!fg) return;
+    try {
+        HookEngine* self = s_instance.load(std::memory_order_relaxed);
+        if (!self) return;
+        HWND fg = GetForegroundWindow();
+        if (!fg) return;
 
-    // Always check layout — catches mouse-click language bar switches (no PID change, no keystroke).
-    // GetKeyboardLayout is kernel-cached, negligible cost at 200ms interval.
-    self->CheckLayoutChange();
+        // Main-thread writer path (timer callback). Lock to serialize with
+        // hook-thread reads; CheckLayoutChange + OnFocusChanged mutate state.
+        std::lock_guard<std::recursive_mutex> _lock(self->stateMutex_);
 
-    DWORD fgPid = 0;
-    GetWindowThreadProcessId(fg, &fgPid);
-    if (fgPid == self->lastForegroundPid_ || fgPid == 0) return;
-    // Foreground PID changed but OnFocusChanged didn't catch it (missed or phantom).
-    // Update PID first (prevents re-triggering if OnFocusChanged early-returns).
-    self->lastForegroundPid_ = fgPid;
-    HOOK_LOG(L"FOCUS poll — PID changed (new pid=%u), re-evaluating", fgPid);
-    self->OnFocusChanged(nullptr);  // nullptr → uses GetForegroundWindow()
+        // Always check layout — catches mouse-click language bar switches (no PID change, no keystroke).
+        // GetKeyboardLayout is kernel-cached, negligible cost at 200ms interval.
+        self->CheckLayoutChange();
+
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fg, &fgPid);
+        if (fgPid == self->lastForegroundPid_ || fgPid == 0) return;
+        // Foreground PID changed but OnFocusChanged didn't catch it (missed or phantom).
+        // Update PID first (prevents re-triggering if OnFocusChanged early-returns).
+        self->lastForegroundPid_ = fgPid;
+        HOOK_LOG(L"FOCUS poll — PID changed (new pid=%u), re-evaluating", fgPid);
+        self->OnFocusChanged(nullptr);  // nullptr → uses GetForegroundWindow()
+    } catch (const std::exception& e) {
+        CrashLog(L"HookEngine::FocusPollTimerProc", e.what());
+    } catch (...) {
+        CrashLog(L"HookEngine::FocusPollTimerProc", "(non-std exception)");
+    }
 }
 
 void HookEngine::RefreshFocusCache(HWND foreground) noexcept {
@@ -2094,38 +2334,31 @@ void HookEngine::OnFocusChanged(HWND triggerHwnd) {
     // GetForegroundWindow() may return a transient window (e.g. JumpList/taskbar) instead
     // of the app the user is actually switching to. triggerHwnd is captured at event time.
     HWND activeHwnd = triggerHwnd ? triggerHwnd : fg;
+    if (!activeHwnd) return;  // nothing to classify against
 
-    // Skip ALL app tracking for hidden and tray/taskbar windows.
-    // Hidden windows = tray message windows owned by apps (NexusKey, IDM, Discord, etc.)
-    // These are not typing targets and must not update currentExe_ or the SmartSwitch map.
-    // Without this guard, right-clicking any app's tray icon would set currentExe_ to that
-    // app's process, then the next real focus change would SAVE the wrong mode for that app.
-    if (!activeHwnd || !IsWindowVisible(activeHwnd) || IsIconic(activeHwnd) || IsTrayOrTaskbarWindow(activeHwnd)) {
-        // Focus poll timer (200ms) will catch missed transitions
-        return;
-    }
-
-    // Skip zero-size or wildly off-screen windows (often used as trick message pumps for Tray menus, like IDM)
-    RECT rect;
-    if (GetWindowRect(activeHwnd, &rect)) {
-        if (rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0 || rect.left <= -20000) {
-            // Focus poll timer (200ms) will catch missed transitions
-            return;
+    // Determine whether this HWND should skip the smart-switch / currentExe_
+    // update path (hidden helpers, tray, zero-size trick windows, tool windows).
+    // Classification ITSELF runs unconditionally below so dispatch flags stay
+    // consistent with the app identity — needed when focus transits through
+    // a helper HWND while the user is typing into the main window.
+    bool skipAppTracking = false;
+    if (!IsWindowVisible(activeHwnd) || IsIconic(activeHwnd) || IsTrayOrTaskbarWindow(activeHwnd)) {
+        skipAppTracking = true;
+    } else {
+        RECT rect;
+        if (GetWindowRect(activeHwnd, &rect) &&
+            (rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0 || rect.left <= -20000)) {
+            skipAppTracking = true;  // trick message-pump windows (IDM et al.)
+        } else if (GetWindowLongW(activeHwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) {
+            skipAppTracking = true;  // tooltips, context menus, floating helpers
         }
     }
 
-    // Skip Tool Windows (WS_EX_TOOLWINDOW). These are used for custom context menus,
-    // floating tooltips, and hidden helper windows (e.g., Discord/Telegram tray menus).
-    // They are not main applications and should not change the Smart Switch state.
-    LONG exStyle = GetWindowLongW(activeHwnd, GWL_EXSTYLE);
-    if (exStyle & WS_EX_TOOLWINDOW) {
-        // Focus poll timer (200ms) will catch missed transitions
-        return;
-    }
-
-    // Successfully passed all window-validation guards — update PID tracker.
-
     // Classify app type — single GetClassNameW call covers all detection.
+    // Runs unconditionally so opening NexusKey BEFORE a WebView2 host (e.g.
+    // Dorion) doesn't leave flags stale at the initial all-zero state when
+    // focus first transits through a helper window — the next keystroke would
+    // otherwise route through the wrong dispatch path.
     // U+202F (narrow no-break space) is a "bait" char inserted before BS sequences so
     // BS always has something to delete (prevents BS being swallowed at empty positions).
     //   - Browsers: need bait (autocomplete/address bar)
@@ -2143,6 +2376,7 @@ void HookEngine::OnFocusChanged(HWND triggerHwnd) {
     isOutlookApp_ = false;
 
     // Normal apps: check for GPU-rendered or apps needing bait (Excel, Outlook)
+    bool isWebView2 = false;
     if (!skipEmptyChar_ && !needBaitChar_ && !useClipboardPaste_) {
         std::wstring exeName = GetExeNameForHwnd(activeHwnd);
         if (!exeName.empty()) {
@@ -2165,13 +2399,38 @@ void HookEngine::OnFocusChanged(HWND triggerHwnd) {
                 const bool isOutlook = exeName.find(L"outlook") != std::wstring::npos;
                 isOutlookApp_ = isOutlook;
                 needBaitChar_ = exeName.find(L"excel") != std::wstring::npos || isOutlook;
+
+                // Tauri / WebView2-embedding apps (e.g. Dorion): detected by
+                // scanning for `Chrome_WidgetWin*` descendants. WebView2 is fundamentally
+                // Chromium, so it suffers from the same autocomplete/suggest bug as Chrome.
+                // We MUST use the bait character (needBaitChar_ = true).
+                if (!needBaitChar_) {
+                    std::wstring exeFullPath = GetExeFullPathForHwnd(activeHwnd);
+                    isWebView2 = IsWebView2App(activeHwnd, exeFullPath);
+                    if (isWebView2) {
+                        needBaitChar_ = true;
+                        skipEmptyChar_ = false;
+                    }
+                }
             }
         }
     }
-    isElectronApp_ = isElectron && !isConsoleApp_;
-    HOOK_LOG(L"  AppDetect: console=%d skipEmpty=%d electron=%d bait=%d clipboard=%d editMsg=%d",
+
+    isElectronApp_ = (isElectron || isWebView2) && !isConsoleApp_;
+    HOOK_LOG(L"  AppDetect: console=%d skipEmpty=%d electron=%d webview2=%d bait=%d clipboard=%d editMsg=%d",
              isConsoleApp_ ? 1 : 0, skipEmptyChar_ ? 1 : 0, isElectronApp_ ? 1 : 0,
-             needBaitChar_ ? 1 : 0, useClipboardPaste_ ? 1 : 0, useEditMsgPath_ ? 1 : 0);
+             isWebView2 ? 1 : 0, needBaitChar_ ? 1 : 0, useClipboardPaste_ ? 1 : 0, useEditMsgPath_ ? 1 : 0);
+
+    // Re-install hooks to guarantee NexusKey remains at the top of the hook chain.
+    // We only do this for Chromium-based architectures (Electron, WebView2, Browsers)
+    // because they install their own WH_KEYBOARD_LL hooks that aggressively drop
+    // synthetic injected events (like our Backspaces) if they sit in front of us.
+    // Doing it conditionally avoids unnecessary unhook/rehook overhead for normal apps.
+    // We must do this even if the PID hasn't changed, because WebView2 creates child
+    // windows that trigger focus events AFTER the initial app launch and hook setup.
+    if (hookThreadId_ && (isElectronApp_ || isBrowser)) {
+        PostThreadMessageW(hookThreadId_, WM_APP_REINSTALL_HOOKS, 0, 0);
+    }
 
     if (useClipboardPaste_ || useEditMsgPath_) {
         RefreshFocusCache(activeHwnd);
@@ -2182,6 +2441,15 @@ void HookEngine::OnFocusChanged(HWND triggerHwnd) {
 
     // Layout auto-disable: check CJK layout on every focus change
     CheckLayoutChange();
+
+    // Skip the smart-switch / currentExe_ update path for helper HWNDs
+    // (hidden, tray, zero-size, tool-window). Classification already ran so
+    // dispatch flags stay correct — we just don't save SmartSwitch state or
+    // bump currentExe_ to a helper's process.
+    if (skipAppTracking) {
+        // Focus poll timer (200ms) will catch missed transitions
+        return;
+    }
 
     // Skip focus tracking entirely if no feature needs it
     if (!smartSwitch_ && !excludeApps_ && !tsfApps_

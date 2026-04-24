@@ -1150,6 +1150,19 @@ void SettingsDialog::initializeUI() {
         }
     }
 
+    // Admin indicator: reflect the CURRENT process's elevation state, not the
+    // config flag. Config and actual state can diverge in several ways:
+    //   - UAC denied on startup → config ON, process OFF
+    //   - Scheduled task removed by antivirus → config ON, process OFF
+    //   - De-elevation (shell dispatch) failed → config OFF, process still ON
+    // Showing real state lets the user self-diagnose these cases.
+    if (IsRunningAsAdmin()) {
+        sciter::dom::element adminBadge = root.find_first("#admin-badge");
+        if (adminBadge.is_valid()) {
+            adminBadge.set_attribute("class", L"admin-badge active");
+        }
+    }
+
     // Restart banner — Settings runs as a subprocess so it cannot observe
     // main-process globals; banner state travels via SharedState flags.
     // Skip the JS round-trip when there is nothing to show.

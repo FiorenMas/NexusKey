@@ -18,6 +18,15 @@ namespace DarkModeHelper {
     [[nodiscard]] bool IsWindowsDarkMode() noexcept;
 
     /**
+     * Detect Windows taskbar/system theme via registry (SystemUsesLightTheme).
+     * Differs from IsWindowsDarkMode() when the user has split app/system themes.
+     * Use this for tray icons and anything else rendered on the taskbar surface.
+     * Falls back to the app theme if the key is missing (older builds).
+     * @return true if the taskbar is dark, false for light
+     */
+    [[nodiscard]] bool IsTaskbarDark() noexcept;
+
+    /**
      * Detect Windows 11 or greater (build >= 22000).
      * @return true if Windows 11+, false for Windows 10 or older
      */

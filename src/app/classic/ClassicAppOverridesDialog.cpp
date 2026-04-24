@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 #include "ClassicAppOverridesDialog.h"
+#include "core/CrashLog.h"
 #include "app/helpers/AppHelpers.h"
 
 #include <windowsx.h>
 #include <algorithm>
+#include <exception>
 #include <vector>
 
 namespace NextKey::Classic {
@@ -278,7 +280,7 @@ int ClassicAppOverridesDialog::Dpi(int value) const noexcept {
 
 // ════════════════════════════════════════════════════════════
 
-LRESULT CALLBACK ClassicAppOverridesDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK ClassicAppOverridesDialog::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) try {
     ClassicAppOverridesDialog* self = nullptr;
 
     if (msg == WM_NCCREATE) {
@@ -336,6 +338,12 @@ LRESULT CALLBACK ClassicAppOverridesDialog::WndProc(HWND hwnd, UINT msg, WPARAM 
             return 0;
     }
 
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (const std::exception& e) {
+    NextKey::CrashLog(L"ClassicAppOverridesDialog::WndProc", e.what());
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+} catch (...) {
+    NextKey::CrashLog(L"ClassicAppOverridesDialog::WndProc", "(non-std exception)");
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

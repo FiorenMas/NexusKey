@@ -146,21 +146,41 @@ SciterSubDialog::SciterSubDialog(const SubDialogConfig& config)
     int winWidth = rc.right - rc.left;
     int winHeight = rc.bottom - rc.top;
 
+    int posX, posY;
+    HMONITOR monitor;
     if (config_.parentHwnd) {
         RECT parentRect;
         GetWindowRect(config_.parentHwnd, &parentRect);
-        int px = parentRect.left + (parentRect.right - parentRect.left - winWidth) / 2;
-        int py = parentRect.top + (parentRect.bottom - parentRect.top - winHeight) / 2;
-        SetWindowPos(get_hwnd(), config_.topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-                     px, py, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        posX = parentRect.left + (parentRect.right - parentRect.left - winWidth) / 2;
+        posY = parentRect.top + (parentRect.bottom - parentRect.top - winHeight) / 2;
+        // Use parent's monitor — correct even if parent sits partly off-screen,
+        // which the computed center point alone wouldn't capture.
+        monitor = MonitorFromWindow(config_.parentHwnd, MONITOR_DEFAULTTONEAREST);
     } else {
         int screenWidth = GetSystemMetrics(SM_CXSCREEN);
         int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-        int x = (screenWidth - winWidth) / 2;
-        int y = (screenHeight - winHeight) / 2;
-        SetWindowPos(get_hwnd(), config_.topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-                     x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        posX = (screenWidth - winWidth) / 2;
+        posY = (screenHeight - winHeight) / 2;
+        POINT center{posX + winWidth / 2, posY + winHeight / 2};
+        monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
     }
+
+    // Clamp to monitor work area so title bar never falls off-screen (issue #102).
+    // MONITOR_DEFAULTTONEAREST is documented to never return NULL, so no fallback.
+    MONITORINFO monitorInfo{sizeof(monitorInfo)};
+    GetMonitorInfoW(monitor, &monitorInfo);
+    const RECT& workArea = monitorInfo.rcWork;
+
+    if (posX + winWidth > workArea.right)   posX = workArea.right - winWidth;
+    if (posY + winHeight > workArea.bottom) posY = workArea.bottom - winHeight;
+    // Top/left clamps come last so that when HWND is taller/wider than the work
+    // area, the top-left stays visible and content overflows the bottom/right
+    // (which is recoverable via scroll) rather than the title bar (which is not).
+    if (posX < workArea.left) posX = workArea.left;
+    if (posY < workArea.top)  posY = workArea.top;
+
+    SetWindowPos(get_hwnd(), config_.topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 posX, posY, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
 
     // Force taskbar presence while DWM transitions are still disabled (avoids flicker)
     SciterHelper::ForceTaskbarPresence(get_hwnd(), IDI_APP);
