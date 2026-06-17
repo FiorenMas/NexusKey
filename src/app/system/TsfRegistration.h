@@ -1,5 +1,5 @@
-// NexusKey - TSF Registration & Diagnostics
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Registration & Diagnostics
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Functions for registering/unregistering the TSF input method DLL,
 // and diagnostic output. Used by EXE to manage DLL registration
@@ -11,7 +11,7 @@
 
 namespace NextKey {
 
-/// Get path to NextKeyTSF.dll (same directory as exe)
+/// Get path to VKeyTSF.dll (same directory as exe)
 std::wstring GetTsfDllPath();
 
 /// Check if TSF is registered by looking for CLSID in registry
@@ -32,9 +32,12 @@ bool UnregisterTsfElevated();
 /// Diagnostic output — enumerates HKLs, TSF profiles, active profile, SharedState
 void RunDiagnostics();
 
-/// Remove any HKCU CLSID override for the NexusKey TSF DLL.
+/// Remove any HKCU CLSID override for the VKey TSF DLL.
 /// Malware can write HKCU\Software\Classes\CLSID\{guid}\InprocServer32 to redirect
 /// DLL loading in all TSF-aware apps. Call this at startup to clean it up.
 void CleanupHkcuClsidOverride() noexcept;
+
+/// Activate the VKey TSF profile programmatically
+bool ActivateVKeyTsfProfile();
 
 }  // namespace NextKey

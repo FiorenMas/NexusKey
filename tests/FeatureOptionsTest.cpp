@@ -1,5 +1,5 @@
-// NexusKey - Feature Options Tests (modernOrtho, autoCaps, allowZwjf)
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Feature Options Tests (modernOrtho, autoCaps, allowZwjf)
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Tests for the 3 feature flags:
 //   1. modernOrtho  — Modern tone placement on diphthongs (ua→uá, ue→ué)
@@ -31,7 +31,7 @@ using Testing::TypeString;
 
 TEST(FeatureOptionsDefaults, NewFieldsDefaults) {
     TypingConfig config;
-    EXPECT_FALSE(config.modernOrtho);
+    EXPECT_TRUE(config.modernOrtho);
     EXPECT_FALSE(config.autoCaps);
     EXPECT_FALSE(config.allowZwjf);  // Default: off (stricter spell check)
 }
@@ -45,12 +45,15 @@ class FeatureFlagsTest : public ::testing::Test {};
 TEST_F(FeatureFlagsTest, InitDefaults_FeatureFlagsAllowZwjf) {
     SharedState state{};
     state.InitDefaults();
-    EXPECT_EQ(state.GetFeatureFlags(), FeatureFlags::ALLOW_ZWJF);
+    EXPECT_EQ(state.GetFeatureFlags(), FeatureFlags::ALLOW_ZWJF | FeatureFlags::MODERN_ORTHO);
 }
 
 TEST_F(FeatureFlagsTest, Encode_ModernOrtho) {
     SharedState state{};
     state.InitDefaults();
+    state.SetFeatureFlags(state.GetFeatureFlags() & ~FeatureFlags::MODERN_ORTHO);
+    ASSERT_FALSE(state.GetFeatureFlags() & FeatureFlags::MODERN_ORTHO);
+
     state.SetFeatureFlags(state.GetFeatureFlags() | FeatureFlags::MODERN_ORTHO);
 
     EXPECT_TRUE(state.GetFeatureFlags() & FeatureFlags::MODERN_ORTHO);
@@ -61,7 +64,7 @@ TEST_F(FeatureFlagsTest, Encode_ModernOrtho) {
 TEST_F(FeatureFlagsTest, Encode_AutoCaps) {
     SharedState state{};
     state.InitDefaults();
-    state.SetFeatureFlags(state.GetFeatureFlags() | FeatureFlags::AUTO_CAPS);
+    state.SetFeatureFlags((state.GetFeatureFlags() & ~FeatureFlags::MODERN_ORTHO) | FeatureFlags::AUTO_CAPS);
 
     EXPECT_FALSE(state.GetFeatureFlags() & FeatureFlags::MODERN_ORTHO);
     EXPECT_TRUE(state.GetFeatureFlags() & FeatureFlags::AUTO_CAPS);
@@ -110,6 +113,55 @@ TEST_F(FeatureFlagsTest, RoundTrip_ConfigToStateToConfig) {
     EXPECT_EQ(original.modernOrtho, decoded.modernOrtho);
     EXPECT_EQ(original.autoCaps, decoded.autoCaps);
     EXPECT_EQ(original.allowZwjf, decoded.allowZwjf);
+}
+
+TEST_F(FeatureFlagsTest, RoundTrip_DebugLogEnabled) {
+    // Guards FeatureFlags::DEBUG_LOG_ENABLED bit slot — if a future addition
+    // collides on the same bit, the round-trip below breaks.
+    TypingConfig original;
+    original.debugLogEnabled = true;
+
+    SharedState state{};
+    state.InitDefaults();
+    state.SetFeatureFlags(EncodeFeatureFlags(original));
+
+    EXPECT_TRUE(state.GetFeatureFlags() & FeatureFlags::DEBUG_LOG_ENABLED);
+
+    TypingConfig decoded;
+    DecodeFeatureFlags(state.GetFeatureFlags(), decoded);
+    EXPECT_TRUE(decoded.debugLogEnabled);
+
+    // Toggling off clears the bit and the decoded bool.
+    original.debugLogEnabled = false;
+    state.SetFeatureFlags(EncodeFeatureFlags(original));
+    EXPECT_FALSE(state.GetFeatureFlags() & FeatureFlags::DEBUG_LOG_ENABLED);
+    DecodeFeatureFlags(state.GetFeatureFlags(), decoded);
+    EXPECT_FALSE(decoded.debugLogEnabled);
+}
+
+TEST_F(FeatureFlagsTest, RoundTrip_SuggestKeepChars) {
+    // Guards FeatureFlags::SUGGEST_KEEP_CHARS bit slot. Live propagation of
+    // this toggle (Settings → Bảng gõ) depends on the bit reaching SharedState
+    // so the 100 ms config-poll timer in main.cpp can call ApplyConfig →
+    // SetSuggestKeepChars on the injector without waiting for a TOML reload.
+    TypingConfig original;
+    original.suggestKeepChars = true;
+
+    SharedState state{};
+    state.InitDefaults();
+    state.SetFeatureFlags(EncodeFeatureFlags(original));
+
+    EXPECT_TRUE(state.GetFeatureFlags() & FeatureFlags::SUGGEST_KEEP_CHARS);
+
+    TypingConfig decoded;
+    DecodeFeatureFlags(state.GetFeatureFlags(), decoded);
+    EXPECT_TRUE(decoded.suggestKeepChars);
+
+    original.suggestKeepChars = false;
+    state.SetFeatureFlags(EncodeFeatureFlags(original));
+    EXPECT_FALSE(state.GetFeatureFlags() & FeatureFlags::SUGGEST_KEEP_CHARS);
+    DecodeFeatureFlags(state.GetFeatureFlags(), decoded);
+    EXPECT_FALSE(decoded.suggestKeepChars);
 }
 
 // ============================================================================
@@ -181,7 +233,7 @@ spell_check = true
 
     auto config = ConfigManager::LoadFromFile(testConfigPath_);
     ASSERT_TRUE(config.has_value());
-    EXPECT_FALSE(config->modernOrtho);
+    EXPECT_TRUE(config->modernOrtho);
     EXPECT_FALSE(config->autoCaps);
     EXPECT_FALSE(config->allowZwjf);  // Default: off
 }
@@ -194,7 +246,7 @@ method = "vni"
 
     auto config = ConfigManager::LoadFromFile(testConfigPath_);
     ASSERT_TRUE(config.has_value());
-    EXPECT_FALSE(config->modernOrtho);
+    EXPECT_TRUE(config->modernOrtho);
     EXPECT_FALSE(config->autoCaps);
     EXPECT_FALSE(config->allowZwjf);  // Default: off
 }
@@ -645,6 +697,7 @@ protected:
     void SetUp() override {
         config_.inputMethod = InputMethod::Telex;
         config_.allowZwjf = true;  // These tests require ZWJF enabled
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -823,8 +876,8 @@ TEST(SpellCheckZwjfTest, Z_Invalid_WithoutFlag) {
         {L'z', Modifier::None, Tone::None, false},
         {L'a', Modifier::None, Tone::Acute, true},
     };
-    auto result = SpellCheck::Validate(states, 2, false);
-    EXPECT_EQ(result, SpellCheck::Result::Invalid);
+    auto result = Phonology::ValidateSyllableState(states, 2, false);
+    EXPECT_EQ(result, Phonology::SyllableState::Invalid);
 }
 
 TEST(SpellCheckZwjfTest, Z_Valid_WithFlag) {
@@ -833,8 +886,8 @@ TEST(SpellCheckZwjfTest, Z_Valid_WithFlag) {
         {L'z', Modifier::None, Tone::None, false},
         {L'a', Modifier::None, Tone::Acute, true},
     };
-    auto result = SpellCheck::Validate(states, 2, true);
-    EXPECT_EQ(result, SpellCheck::Result::Valid);
+    auto result = Phonology::ValidateSyllableState(states, 2, true);
+    EXPECT_EQ(result, Phonology::SyllableState::Valid);
 }
 
 TEST(SpellCheckZwjfTest, F_Invalid_WithoutFlag) {
@@ -843,8 +896,8 @@ TEST(SpellCheckZwjfTest, F_Invalid_WithoutFlag) {
         {L'a', Modifier::None, Tone::None, true},
         {L'n', Modifier::None, Tone::None, false},
     };
-    auto result = SpellCheck::Validate(states, 3, false);
-    EXPECT_EQ(result, SpellCheck::Result::Invalid);
+    auto result = Phonology::ValidateSyllableState(states, 3, false);
+    EXPECT_EQ(result, Phonology::SyllableState::Invalid);
 }
 
 TEST(SpellCheckZwjfTest, F_Valid_WithFlag) {
@@ -854,8 +907,8 @@ TEST(SpellCheckZwjfTest, F_Valid_WithFlag) {
         {L'a', Modifier::None, Tone::None, true},
         {L'n', Modifier::None, Tone::None, false},
     };
-    auto result = SpellCheck::Validate(states, 3, true);
-    EXPECT_EQ(result, SpellCheck::Result::Valid);
+    auto result = Phonology::ValidateSyllableState(states, 3, true);
+    EXPECT_EQ(result, Phonology::SyllableState::Valid);
 }
 
 TEST(SpellCheckZwjfTest, W_Valid_WithFlag) {
@@ -865,8 +918,8 @@ TEST(SpellCheckZwjfTest, W_Valid_WithFlag) {
         {L'e', Modifier::None, Tone::None, true},
         {L'n', Modifier::None, Tone::None, false},
     };
-    auto result = SpellCheck::Validate(states, 3, true);
-    EXPECT_EQ(result, SpellCheck::Result::Valid);
+    auto result = Phonology::ValidateSyllableState(states, 3, true);
+    EXPECT_EQ(result, Phonology::SyllableState::Valid);
 }
 
 TEST(SpellCheckZwjfTest, J_Valid_WithFlag) {
@@ -875,8 +928,8 @@ TEST(SpellCheckZwjfTest, J_Valid_WithFlag) {
         {L'j', Modifier::None, Tone::None, false},
         {L'a', Modifier::None, Tone::Acute, true},
     };
-    auto result = SpellCheck::Validate(states, 2, true);
-    EXPECT_EQ(result, SpellCheck::Result::Valid);
+    auto result = Phonology::ValidateSyllableState(states, 2, true);
+    EXPECT_EQ(result, Phonology::SyllableState::Valid);
 }
 
 TEST(SpellCheckZwjfTest, Z_ValidPrefix_WithFlag) {
@@ -884,8 +937,8 @@ TEST(SpellCheckZwjfTest, Z_ValidPrefix_WithFlag) {
     CharState states[] = {
         {L'z', Modifier::None, Tone::None, false},
     };
-    auto result = SpellCheck::Validate(states, 1, true);
-    EXPECT_EQ(result, SpellCheck::Result::ValidPrefix);
+    auto result = Phonology::ValidateSyllableState(states, 1, true);
+    EXPECT_EQ(result, Phonology::SyllableState::ValidPrefix);
 }
 
 TEST(SpellCheckZwjfTest, StandardConsonants_StillWork) {
@@ -895,8 +948,8 @@ TEST(SpellCheckZwjfTest, StandardConsonants_StillWork) {
         {L'a', Modifier::None, Tone::Acute, true},
         {L'n', Modifier::None, Tone::None, false},
     };
-    auto result = SpellCheck::Validate(states, 3, false);
-    EXPECT_EQ(result, SpellCheck::Result::Valid);
+    auto result = Phonology::ValidateSyllableState(states, 3, false);
+    EXPECT_EQ(result, Phonology::SyllableState::Valid);
 }
 
 // ============================================================================

@@ -12,8 +12,7 @@ body {
     box-sizing: border-box;
     padding: 12px;
     position: relative;
-    display: flex;
-    flex-direction: column;
+    flow: vertical;
     background: var(--bg-glass);
 }
 
@@ -28,9 +27,8 @@ body {
     background: transparent;
     cursor: pointer;
     padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    text-align: center;
+    vertical-align: middle;
     border-radius: 4px;
     z-index: 100;
 }
@@ -55,7 +53,7 @@ body {
     width: 64px;
     height: 64px;
     margin-bottom: 4px;
-    border-radius: 12px;
+    image-rendering: optimize-quality;
 }
 
 .app-title {
@@ -63,7 +61,6 @@ body {
     font-weight: 700;
     color: var(--color-primary);
     margin: 0 0 4px 0;
-    letter-spacing: 0.3px;
 }
 
 .app-tagline {
@@ -82,11 +79,9 @@ body {
 }
 
 .credit-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flow: horizontal;
+    vertical-align: middle;
     padding: 6px 0;
-    gap: 8px;
     border-bottom: 1px solid var(--border-row);
 }
 
@@ -95,22 +90,23 @@ body {
 }
 
 .credit-label {
+    width: max-content;
     color: var(--text-light);
     font-size: 12px;
     font-weight: 500;
 }
 
 .credit-value {
+    margin-left: auto;
     color: var(--text-dark);
     font-size: 12px;
     font-weight: 700;
 }
 
-/* Repo buttons - centered and larger */
 .buttons-section {
-    display: flex;
+    flow: horizontal;
     justify-content: center;
-    gap: 12px;
+    border-spacing: 12px;
     margin-bottom: 10px;
 }
 

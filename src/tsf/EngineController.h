@@ -1,5 +1,5 @@
-// NexusKey - Engine Controller Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Engine Controller Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -44,6 +44,42 @@ public:
     /// Commit with trailing character (e.g., space)
     void CommitWithChar(ITfContext* pContext, wchar_t appendChar);
 
+    /// Esc-restore: end composition with the user's RAW keys (case-preserved),
+    /// not the Vietnamese form. Returns false if engine has no raw input —
+    /// caller should fall back to standard Commit() flow. Edit session
+    /// failures are logged (via RequestEditSession) but not propagated;
+    /// matches the existing Commit() / CommitWithChar() pattern.
+    /// Resets engine state and digitLedWord_ on success.
+    [[nodiscard]] bool CommitRawAndEnd(ITfContext* pContext);
+
+    /// Whether Esc-restore-raw is enabled in current config snapshot.
+    /// Cheap getter — KeyEventSink uses this to gate the VK_ESCAPE branch.
+    [[nodiscard]] bool IsEscRestoreRawEnabled() const noexcept {
+        return config_.escRestoreRawEnabled;
+    }
+
+    /// Whether "BS keeps chars on suggest" is enabled in current config snapshot.
+    [[nodiscard]] bool IsSuggestKeepCharsEnabled() const noexcept {
+        return config_.suggestKeepChars;
+    }
+
+    [[nodiscard]] bool HasNonEmptySelection(ITfContext* pContext);
+    /// Commit-undo state machine for ESC-restore-raw post-BS (design 2026-05-17).
+    /// Mirrors HookEngine's state machine but lighter — single-entry cache, no replay.
+    enum class CommitUndoState : uint8_t {
+        Idle   = 0,
+        Ready  = 1,  // Just CommitWithChar'd — waiting for first BS
+        Primed = 2,  // BS happened in Ready — ESC will now restore from cache
+    };
+
+    [[nodiscard]] bool IsCommitUndoReady()  const noexcept { return commitUndoState_ == CommitUndoState::Ready; }
+    [[nodiscard]] bool IsCommitUndoPrimed() const noexcept { return commitUndoState_ == CommitUndoState::Primed; }
+    [[nodiscard]] bool WithinUndoWindow()   const noexcept;
+    void TransitionUndoReadyToPrimed() noexcept;
+    void ResetCommitUndo() noexcept;
+    void OnNonRestoreKey() noexcept;  // Any key besides BS/ESC in Ready/Primed → Idle
+    [[nodiscard]] bool TryRestoreLastCommitRaw(ITfContext* pContext);
+
     /// Reset engine state
     void Reset();
 
@@ -56,11 +92,16 @@ public:
     /// Check if engine has buffer (for sync check)
     bool HasEngineBuffer() const { return engine_->Count() > 0; }
 
-    /// Check if vkCode is a VNI/Combined digit key (1-9) that should NOT trigger commit
-    bool IsVniDigitKey(UINT vkCode) const {
+    /// Check if vkCode is a digit key (0-9) that should be routed to the
+    /// engine (and NOT trigger commit). VNI '0' is the clear-tone key;
+    /// UserDefined may remap any digit via customKeyMap, so we route the
+    /// full 0-9 range in those modes (unmapped digits fall through as
+    /// ProcessChar literal). Telex/SimpleTelex don't claim digits.
+    bool IsEngineDigitKey(UINT vkCode) const {
         return (config_.inputMethod == InputMethod::VNI ||
-                config_.inputMethod == InputMethod::Combined) &&
-               vkCode >= 0x31 && vkCode <= 0x39 &&
+                config_.inputMethod == InputMethod::Combined ||
+                config_.inputMethod == InputMethod::UserDefined) &&
+               vkCode >= 0x30 && vkCode <= 0x39 &&
                !(GetKeyState(VK_SHIFT) & 0x8000);
     }
 
@@ -94,6 +135,10 @@ public:
 
     /// Re-read flags from SharedState (call on focus)
     void RefreshFlags();
+
+    /// Publish TSF_TIP_ACTIVE flag to SharedState. Called by KeyEventSink::OnSetFocus
+    /// (foreground/background) and TextService::Deactivate (layout switch-away).
+    void SetTsfTipActive(bool active);
 
     /// Non-owning access to the SharedStateManager — shared with ReadonlyContextProvider
     /// so both can read/write the same memory-mapped region without duplicating the
@@ -143,11 +188,26 @@ private:
     ITfContext* lastContext_ = nullptr;   // Last seen context (AddRef'd for safe identity comparison)
     bool contextBlocked_ = false;        // True if current context blocks input (password, etc.)
     bool isScintillaApp_ = false;        // Cached: current app is Scintilla-based (Notepad++, etc.)
+    bool digitLedWord_ = false;          // True = current word started with a digit (VNI/Combined/UserDefined) → treat whole word as English (pass through; no composition)
 
     // Pending Backspace revive — set by PrepareBackspaceRevive (called from OnTestKeyDown),
     // consumed by HandleKey(VK_BACK). CComPtr auto-manages ref count.
     std::wstring pendingReviveWord_;
     CComPtr<ITfRange> pendingReviveRange_;
+
+    // Commit-undo cache for ESC restore-raw post-BS (design 2026-05-17).
+    struct LastCommit {
+        std::wstring text;       // What was written to document (including trailing char)
+        std::wstring rawInput;   // engine_->PeekRaw() snapshot before Commit reset
+        bool hasTrailingChar = false;
+        DWORD timestamp = 0;     // GetTickCount() at commit
+    };
+    LastCommit lastCommit_;
+    CommitUndoState commitUndoState_ = CommitUndoState::Idle;
+
+    static constexpr DWORD kCommitUndoTimeoutMs = 1500;
+
+    void RecordCommitSnapshot(std::wstring text, std::wstring rawInput, bool hasTrailingChar) noexcept;
 };
 
 }  // namespace TSF

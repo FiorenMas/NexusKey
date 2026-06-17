@@ -1,5 +1,5 @@
-// NexusKey - Apply deferred TSF DLL swap at EXE startup
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Apply deferred TSF DLL swap at EXE startup
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -17,7 +17,7 @@ enum class PendingDllState {
 };
 
 /// Called early in the main-process startup path (before CleanupOldUpdateFiles).
-/// Inspects `exeDir\\NextKeyTSF.dll.pending`; if present, tries to swap it in
+/// Inspects `exeDir\\VKeyTSF.dll.pending`; if present, tries to swap it in
 /// for the live copy. Never throws. Caller MUST publish the result into
 /// SharedState flags (TSF_PENDING_DLL_SWAP / TSF_POST_UPDATE_REBOOT) so
 /// subprocess dialogs can observe it — hence [[nodiscard]].

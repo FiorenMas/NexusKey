@@ -1,5 +1,5 @@
-// NexusKey - TSF Language Bar Button
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Language Bar Button
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Implements ITfLangBarItemButton to show V/E toggle icon in the system tray.
 // Windows automatically shows the button when the TIP is active and hides it
@@ -15,7 +15,7 @@ namespace TSF {
 
 class EngineController;
 
-/// TSF Language Bar button — shown in system tray when NexusKey TIP is active.
+/// TSF Language Bar button — shown in system tray when VKey TIP is active.
 /// Left-click toggles Vietnamese/English mode.
 /// Right-click shows context menu (Settings, About).
 class LanguageBarButton : public ITfLangBarItemButton, public ITfSource {

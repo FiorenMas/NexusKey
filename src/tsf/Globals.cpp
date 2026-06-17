@@ -1,5 +1,5 @@
-// NexusKey - TSF Globals Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Globals Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "Globals.h"
@@ -14,15 +14,15 @@ HINSTANCE g_hInstance = nullptr;
 // DLL reference count
 LONG g_dllRefCount = 0;
 
-// {D84D1E5B-8F2C-4B1A-9D3E-6F7A8B9C0D1E}
-// NexusKey Text Service CLSID
+// {DEB18BD1-2331-4F2A-B030-DA9EB0093683}
+// VKey Text Service CLSID
 DEFINE_GUID(CLSID_TextService,
-    0xD84D1E5B, 0x8F2C, 0x4B1A, 0x9D, 0x3E, 0x6F, 0x7A, 0x8B, 0x9C, 0x0D, 0x1E);
+    0xDEB18BD1, 0x2331, 0x4F2A, 0xB0, 0x30, 0xDA, 0x9E, 0xB0, 0x09, 0x36, 0x83);
 
-// {E95E2F6C-9A3D-5C2B-AE4F-7A8B9CAD1E2F}
-// NexusKey Profile GUID (Vietnamese)
+// {2FE17DA4-D8E2-4B28-8566-C30E8F04BFD4}
+// VKey Profile GUID (Vietnamese)
 DEFINE_GUID(GUID_Profile,
-    0xE95E2F6C, 0x9A3D, 0x5C2B, 0xAE, 0x4F, 0x7A, 0x8B, 0x9C, 0xAD, 0x1E, 0x2F);
+    0x2FE17DA4, 0xD8E2, 0x4B28, 0x85, 0x66, 0xC3, 0x0E, 0x8F, 0x04, 0xBF, 0xD4);
 
 // {E5B5E9F1-7A3B-4C2D-9E8F-1A2B3C4D5E6F}
 // Display Attribute GUID (invisible - no underline/highlight)

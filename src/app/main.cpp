@@ -1,5 +1,5 @@
-// NexusKey - Core Application Entry Point
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Core Application Entry Point
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "system/TrayIcon.h"
 #include "system/FloatingIcon.h"
@@ -17,6 +17,7 @@
 #include "core/Strings.h"
 #include "core/Debug.h"
 #include "core/CrashLog.h"
+#include "core/Logger.h"
 
 #include "system/TsfRegistration.h"
 #include "system/StartupHelper.h"
@@ -24,25 +25,28 @@
 
 #include "system/HotkeyManager.h"
 #include "system/HotkeyWiring.h"
+#include "system/WatchdogController.h"
 #include "core/ipc/SharedStateManager.h"
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
 #include "system/HookEngine.h"
+#include "system/MainThreadWorker.h"
 #include "system/QuickConvert.h"
 #endif
 
 #include <Windows.h>
 #include <ole2.h>
 #include <timeapi.h>
+#include <atomic>
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <string>
-#include <atomic>
 #include <thread>
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "winmm.lib")
 
-// Common Controls v6 is declared in NexusKey.exe.manifest (DPI awareness + CC v6)
+// Common Controls v6 is declared in VKey.exe.manifest (DPI awareness + CC v6)
 
 using namespace NextKey;
 
@@ -57,9 +61,11 @@ static HINSTANCE g_hInstance = nullptr;
 
 static SharedStateManager g_sharedState;  // Shared memory for Settings subprocess IPC
 static HotkeyManager g_hotkeyManager;
+static WatchdogController g_watchdog;  // Owns heartbeat + Task Scheduler entry + VKeyWatchdog.exe lifecycle
 
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
 static HookEngine g_hookEngine;
+static MainThreadWorker g_mainThreadWorker;  // Sprint 1 D9: drain config-change work off main thread
 static std::unique_ptr<QuickConvert> g_quickConvert;
 static HotkeyManager::SlotId g_toggleHotkeySlot = 0;
 static HotkeyManager::SlotId g_convertHotkeySlot = 0;
@@ -70,15 +76,15 @@ void OnMenuCommand(TrayMenuId id);
 
 // Settings window helpers — search by title (subprocess may or may not be open)
 static HWND GetSettingsHwnd() noexcept {
-    return FindWindowW(nullptr, L"NexusKey Settings");
+    return FindWindowW(nullptr, L"VKey Settings");
 }
 static void NotifySettingsMode(bool vietnamese) noexcept {
     if (HWND h = GetSettingsHwnd()) {
-        PostMessageW(h, WM_NEXUSKEY_MODE_CHANGED, vietnamese ? 1 : 0, 0);
+        PostMessageW(h, WM_VKEY_MODE_CHANGED, vietnamese ? 1 : 0, 0);
     }
 }
 
-#ifndef NEXUSKEY_HOOK_ENGINE
+#ifndef VKEY_HOOK_ENGINE
 // V/E icon sync: 250ms poll of SharedState flags (atomic read, no IPC)
 static constexpr UINT_PTR TIMER_ID_ICON_POLL = 100;
 
@@ -143,6 +149,8 @@ static void CleanupFloatingIcon() noexcept {
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     g_hInstance = hInstance;
+    // Brand the log file before anything writes to it. Modern build = Sciter UI.
+    ::NextKey::Logger::SetRoleTag(L"Modern");
     InstallCursorCrashHandler();  // Restore system cursors if we crash during window picking
 
     // Last-resort catch: if a C++ throw ever escapes all try/catch at thread boundaries
@@ -240,6 +248,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     if (lpCmdLine && wcsstr(lpCmdLine, L"--spellexclusions") != nullptr) {
         RunSpellExclusionsSubprocess();  // [[noreturn]]
     }
+    if (lpCmdLine && wcsstr(lpCmdLine, L"--userdefined") != nullptr) {
+        RunUserDefinedSubprocess();  // [[noreturn]]
+    }
+    if (lpCmdLine && wcsstr(lpCmdLine, L"--hotkeys") != nullptr) {
+        RunHotkeysSubprocess();  // [[noreturn]]
+    }
 
     // ═══════════════════════════════════════════════════════════
     // Main Process
@@ -256,13 +270,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         }
     }
 
-    // Ensure only one background instance of NexusKey runs at a time.
+    // Ensure only one background instance of VKey runs at a time.
     // We check this AFTER subprocess routing so settings/macro dialogs
     // can spawn freely, but a second background process cannot.
     // NOTE: Use default DACL (nullptr). MakeCreatorOnlySecurityAttributes() uses
     // CO (Creator Owner) SID which does NOT resolve for non-container objects like
     // mutexes — second instance gets ERROR_ACCESS_DENIED instead of ERROR_ALREADY_EXISTS.
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\NexusKey_Main_Mutex");
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\VKey_Main_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (isAdminRestart) {
             // Admin-restart path: old instance is in the middle of cleanup.
@@ -283,9 +297,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             // existing instance to indicate the app is active. Otherwise, strictly silent.
             auto sysConfig = ConfigManager::LoadSystemConfigOrDefault();
             if (sysConfig.showOnStartup) {
-                HWND existingTrayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                HWND existingTrayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
                 if (existingTrayWnd) {
-                    PostMessageW(existingTrayWnd, WM_NEXUSKEY_SHOW_SETTINGS, 0, 0);
+                    PostMessageW(existingTrayWnd, WM_VKEY_SHOW_SETTINGS, 0, 0);
 
                     HWND existingSettings = GetSettingsHwnd();
                     if (existingSettings) {
@@ -331,6 +345,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         NEXTKEY_LOG(L"Startup task missing — fell back to registry, disabled admin mode in config");
     }
 
+    // Watchdog is opt-in (default OFF). Init mirrors the config flag, and —
+    // if previously enabled — launches VKeyWatchdog.exe and starts the
+    // heartbeat thread (single-instance mutex inside watchdog dedups against
+    // the logon-trigger task, so re-launch is safe).
+    g_watchdog.Init(systemConfig);
+
     // Check for update failure marker (installer failed and relaunched us)
     bool updateJustFailed = false;
     {
@@ -346,7 +366,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         }
     }
 
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
     // ═══════════════════════════════════════════════════════════
     // Hook Engine Mode — single process, no DLL/COM needed
     // ═══════════════════════════════════════════════════════════
@@ -362,6 +382,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         state.optimizeLevel = config.optimizeLevel;
         state.codeTable = static_cast<uint8_t>(config.codeTable);
         state.SetFeatureFlags(EncodeFeatureFlags(config));
+        // Phase 1 perf histogram: surface the hidden TOML toggle through the
+        // SharedState diagFlags byte so the hook thread can react via
+        // QuickSyncFromSharedState without a TOML re-parse.
+        state.diagFlags = config.perfHistogramEnabled ? DiagFlags::PERF_HISTOGRAM : 0;
         if (!startVietnamese) {
             state.flags &= ~SharedFlags::VIETNAMESE_MODE;
         }
@@ -387,7 +411,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     if (!g_trayIcon.Create(hInstance, startVietnamese)) {
         // MessageBox acceptable: fatal startup error, app cannot function without tray icon.
         // No matching StringId — using English string (language config not yet applied to UI).
-        MessageBoxW(nullptr, L"Failed to create tray icon", L"NexusKey", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to create tray icon", L"VKey", MB_ICONERROR);
         CloseHandle(hMutex);
         return 1;
     }
@@ -400,7 +424,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         WPARAM wp = vietnamese ? 1 : 0;
         HWND trayWnd = g_trayIcon.GetMessageWindow();
         if (trayWnd) {
-            PostMessageW(trayWnd, WM_NEXUSKEY_TRAY_MODE_SYNC, wp, 0);
+            PostMessageW(trayWnd, WM_VKEY_TRAY_MODE_SYNC, wp, 0);
         }
         // Floating icon: direct update (same thread, no PostMessage needed)
         g_floatingIcon.SetVietnameseMode(vietnamese);
@@ -415,14 +439,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     g_hookEngine.SetTsfModeCallback([](bool tsfActive, bool tsfReadonly) {
         g_sharedState.SetOrClearFlag(SharedFlags::TSF_ACTIVE, tsfActive);
         g_sharedState.SetOrClearFlag(SharedFlags::TSF_READONLY, tsfReadonly);
+        if (tsfActive && g_hookEngine.IsVietnameseMode()) {
+            HWND trayWnd = g_trayIcon.GetMessageWindow();
+            if (trayWnd) {
+                PostMessageW(trayWnd, WM_VKEY_ACTIVATE_TSF, 0, 0);
+            }
+        }
     });
 
     // Wire hook-reload callback: sub-dialog subprocess → main EXE eager sync.
     // Without this, new lists (TSF apps, excluded apps, macros, …) only apply on the next
     // keystroke / focus change in the target app. SyncConfigFromSharedState reads
     // configGeneration; it must not touch the Named Event (auto-reset, reserved for TSF DLL).
+    //
+    // Sprint 1 D9: route the actual work onto MainThreadWorker so SyncConfig
+    // (which acquires stateMutex_ + may ReloadFromToml — file I/O) runs on
+    // a dedicated thread, not the tray-window message thread. The worker
+    // pre-empts the hook thread's QuickSync slow path: by the time the next
+    // hook key arrives, lastConfigGeneration_ already matches and ProcessKeyDown
+    // hits the no-op fast-path inside QuickSyncFromSharedState.
     g_trayIcon.SetHookReloadCallback([]() {
-        g_hookEngine.SyncConfigFromSharedState();
+        g_mainThreadWorker.Signal();
     });
 
     // Wire settings dialog → HookEngine mode set (cross-process)
@@ -432,7 +469,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         }
     });
 
-    // Wire menu state getter — reads from SharedState only (no TOML)
+    // Wire menu state getter — reads from SharedState + g_watchdog (no TOML)
     g_trayIcon.SetMenuStateGetter([]() -> TrayMenuState {
         SharedState state = g_sharedState.Read();
         uint32_t ff = state.GetFeatureFlags();
@@ -442,13 +479,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             (ff & FeatureFlags::SMART_SWITCH) != 0,
             (ff & FeatureFlags::MACRO_ENABLED) != 0,
             state.inputMethod,
-            static_cast<CodeTable>(state.codeTable)
+            static_cast<CodeTable>(state.codeTable),
+            g_watchdog.IsEnabled()
         };
     });
-
-    // Wire hotkeys (toggle V/E + quick convert) and config reload callback
-    WireHotkeys(g_hotkeyManager, g_hookEngine, g_trayIcon, g_quickConvert,
-                g_toggleHotkeySlot, g_convertHotkeySlot, hInstance, hotkeyConfig);
 
     // Set 1ms timer resolution so Sleep(1) actually sleeps ~1ms instead of ~15ms.
     // Required for smooth Vietnamese input — backspace-then-retype needs a short gap
@@ -458,15 +492,89 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // Share g_sharedState with HookEngine for direct reading (same process, no Open needed)
     g_hookEngine.SetSharedStateReader(&g_sharedState);
 
-    // Start keyboard hook engine
-    if (!g_hookEngine.Start(hInstance, config, startVietnamese, systemConfig.startupMode)) {
+    // Wire HotkeyManager to HookEngine for modifier reconciliation on focus switch
+    g_hookEngine.SetHotkeyManager(&g_hotkeyManager);
+
+    // Wave 3 PR 3.6 — wire the worker-signal callback BEFORE HookEngine::Start.
+    // Otherwise the LL hook thread (spawned inside Start) could read
+    // `workerSignalFn_` from its QuickSync slow-path bail-out while main is
+    // still mid-assign — std::function copy-assignment is NOT atomic, so a
+    // concurrent read on hook = data race = UB. Pre-Start init means the
+    // C++ thread-creation happens-before relation publishes the assigned
+    // function to the new thread safely. MainThreadWorker::Signal is safe
+    // before its own Start (latches, dispatches on first wake — see header
+    // doc), so wiring it pre-everything is fine.
+    g_hookEngine.SetWorkerSignalFn([]() { g_mainThreadWorker.Signal(); });
+
+    // Wave 3 PR 3.7 — Start HookEngine BEFORE WireHotkeys so its hook
+    // thread id is published by the time WireHotkeys reads it for
+    // HotkeyManager::Initialize. The pre-3.7 ordering installed the
+    // HotkeyManager LL hook (inside WireHotkeys) before HookEngine
+    // spawned its thread, leaving a ~10 ms window where a hotkey match
+    // would inline-dispatch the convert callback on the LL thread and
+    // mutate engine_ off-thread (Rule 11.3 violation, hidden by the
+    // pre-3.7 unconditional inline fallback).
+    if (!g_hookEngine.Start(hInstance, config, startVietnamese)) {
         // MessageBox acceptable: fatal startup error, app cannot function without keyboard hook.
         // No matching StringId — using English string (language config not yet applied to UI).
         timeEndPeriod(1);
-        MessageBoxW(nullptr, L"Failed to install keyboard hook", L"NexusKey", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to install keyboard hook", L"VKey", MB_ICONERROR);
         CloseHandle(hMutex);
         return 1;
     }
+
+    // Wire hotkeys (toggle V/E + quick convert) — HotkeyManager::Initialize
+    // inside WireHotkeys reads `hookEngine.GetHookThreadId()` (now non-zero
+    // since Start succeeded above) and publishes it BEFORE installing the
+    // LL hook, so the LL callback never observes a stale 0.
+    WireHotkeys(g_hotkeyManager, g_hookEngine, g_trayIcon, g_quickConvert,
+                g_toggleHotkeySlot, g_convertHotkeySlot, hInstance, hotkeyConfig);
+
+    // Wave 3 PR 3.8 — live toggle-hotkey propagation from SharedState.
+    // SettingsDialog defers the TOML save by 30s but writes the hotkey
+    // into SharedState immediately. HookEngine's QuickSync slow body
+    // detects the SharedState diff and fires this callback so the new
+    // binding reaches HotkeyManager in ~ms instead of 30s.
+    // Wired AFTER WireHotkeys so `g_toggleHotkeySlot` is valid.
+    g_hookEngine.SetHotkeyChangedCallback([](const HotkeyConfig& hk) {
+        g_hotkeyManager.UpdateHotkey(g_toggleHotkeySlot, hk);
+    });
+
+    // Sprint 1 D9: launch MainThreadWorker after the hook engine is up so the
+    // first config-change Signal it sees has a fully-initialised HookEngine
+    // to call into. Handler runs on the worker's own thread.
+    //
+    // Wave 3 PR 3.6 (worker-thread doctrine §12.4): workHandler also drains
+    // any pending focus-classify request latched by WinEventProc. Wiring
+    // both signal targets through the same handler keeps Signal()
+    // coalescing intact — a burst of signals collapses into one wake that
+    // drains both queues.
+    g_mainThreadWorker.SetWorkHandler([]() {
+        g_hookEngine.SyncConfigFromSharedState();
+        g_hookEngine.DrainClassifyOnWorker();
+        // Adaptive-tick (plan 2026-05-27): when MarkActivity wakes the worker
+        // via Signal, this is where the cadence gets retuned back to active.
+        // The Signal path doesn't run the tick handler — it runs this work
+        // handler — so RetuneCadenceIfNeeded must be invoked here too.
+        g_hookEngine.RetuneCadenceIfNeeded();
+    });
+    // (SetWorkerSignalFn already wired above, BEFORE HookEngine::Start —
+    //  see Wave 3 PR 3.6 comment there for the std::function race rationale.)
+    // Sprint 1 D10: 200 ms periodic tick — replaces the retired
+    // SetTimer(nullptr, 0, 200, FocusPollTimerProc) inside HookEngine::Start.
+    // Drives CJK layout poll + foreground-PID fallback off the worker thread.
+    g_mainThreadWorker.SetTickHandler([]() {
+        g_hookEngine.OnTickPoll();
+    });
+    // Adaptive-tick retune callback — invoked by HookEngine when the desired
+    // cadence changes (active -> idle-short -> idle-long -> active). Updates
+    // tickInterval_ inside MainThreadWorker; the next wait_for picks up the
+    // new value at the next loop iteration.
+    g_hookEngine.SetTickRetuneFn([](std::chrono::milliseconds ms) noexcept {
+        g_mainThreadWorker.SetTickInterval(ms);
+    });
+    g_mainThreadWorker.SetTickInterval(std::chrono::milliseconds(NextKey::kTickActiveMs));
+    g_mainThreadWorker.Start();
 
     NEXTKEY_LOG(L"HookEngine started, entering message loop");
 
@@ -511,16 +619,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             // calling thread — sibling threads in this file all call it; match them.
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             try {
-                Sleep(3000);
+                Sleep(30000);
                 auto info = UpdateChecker::CheckForUpdate();
                 if (info.available) {
-                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                    HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
                     if (trayWnd) {
                         auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
                         if (pInfo) {
                             // WndProc returns true (1) on success and takes ownership of pInfo.
                             // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
-                            if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
+                            if (!SendMessageW(trayWnd, WM_VKEY_UPDATE_AVAILABLE, 0,
                                               reinterpret_cast<LPARAM>(pInfo))) {
                                 delete pInfo;
                             }
@@ -547,6 +655,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     CleanupFloatingIcon();
     g_trayIcon.Destroy();
     g_hotkeyManager.Uninstall();
+    // Sprint 1 D9: stop the worker before HookEngine — handler captures
+    // g_hookEngine, so the worker thread must finish any in-flight
+    // SyncConfigFromSharedState before HookEngine teardown begins.
+    g_mainThreadWorker.Stop();
     g_hookEngine.Stop();
     timeEndPeriod(1);
 
@@ -567,10 +679,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             // No matching StringId — using English strings (first-run scenario, language not configured yet).
             int result = MessageBoxW(
                 nullptr,
-                L"NexusKey needs to register its input method.\n\n"
+                L"VKey needs to register its input method.\n\n"
                 L"This requires administrator privileges.\n"
                 L"Click OK to continue with elevation.",
-                L"NexusKey Setup",
+                L"VKey Setup",
                 MB_OKCANCEL | MB_ICONINFORMATION
             );
 
@@ -579,7 +691,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
                     MessageBoxW(nullptr,
                         L"Failed to register input method.\n"
                         L"Please run as administrator.",
-                        L"NexusKey", MB_ICONERROR);
+                        L"VKey", MB_ICONERROR);
                 }
             }
         }
@@ -601,6 +713,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         state.optimizeLevel = config.optimizeLevel;
         state.codeTable = static_cast<uint8_t>(config.codeTable);
         state.SetFeatureFlags(EncodeFeatureFlags(config));
+        state.diagFlags = config.perfHistogramEnabled ? DiagFlags::PERF_HISTOGRAM : 0;
         g_sharedState.Write(state);
         NEXTKEY_LOG(L"SharedState created and initialized (TSF_ACTIVE=1, TSF-only mode)");
 
@@ -617,7 +730,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     if (!g_trayIcon.Create(hInstance)) {
         // MessageBox acceptable: fatal startup error, app cannot function without tray icon.
         // No matching StringId — using English string (language config not yet applied to UI).
-        MessageBoxW(nullptr, L"Failed to create tray icon", L"NexusKey", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Failed to create tray icon", L"VKey", MB_ICONERROR);
         CoUninitialize();
         CloseHandle(hMutex);
         return 1;
@@ -631,7 +744,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
         g_trayIcon.SetVietnameseMode(vietnamese);
     });
 
-    // Wire menu state getter — reads from SharedState only (no TOML)
+    // Wire menu state getter — reads from SharedState + g_watchdog (no TOML)
     g_trayIcon.SetMenuStateGetter([]() -> TrayMenuState {
         SharedState state = g_sharedState.Read();
         uint32_t ff = state.GetFeatureFlags();
@@ -641,21 +754,34 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             (ff & FeatureFlags::SMART_SWITCH) != 0,
             (ff & FeatureFlags::MACRO_ENABLED) != 0,
             state.inputMethod,
-            static_cast<CodeTable>(state.codeTable)
+            static_cast<CodeTable>(state.codeTable),
+            g_watchdog.IsEnabled()
         };
     });
 
     // Poll SharedState flags every 250ms to sync icon V/E state
     SetTimer(g_trayIcon.GetMessageWindow(), TIMER_ID_ICON_POLL, 250, IconPollTimerProc);
 
-    // Internal Hotkey — TSF mode has toggle only (no QuickConvert)
+    // Internal Hotkey — TSF mode has toggle only (no QuickConvert).
+    //
+    // Wave 3 PR 3.7 — this branch compiles when `VKEY_HOOK_ENGINE` is NOT
+    // defined (TSF-only build, no `g_hookEngine`). HotkeyManager has no
+    // cross-thread dispatch target, so `Initialize` is called with
+    // hookThreadId=0. The toggle callback's body is a single
+    // `PostMessageW` to the tray's message window (Win32 cross-thread-safe),
+    // so `runsOnAnyThread=true` is correct — the LL callback may invoke it
+    // inline on the LL thread. Any future TSF-only hotkey that mutates
+    // shared state MUST either provide its own dispatch thread or remain
+    // `runsOnAnyThread=false` (in which case it drops silently rather
+    // than risk Rule 11.3 violation on LL thread).
     auto hotkeyOpt = ConfigManager::LoadHotkeyConfig(ConfigManager::GetConfigPath());
     if (hotkeyOpt && hotkeyOpt->HasAny()) {
         HWND trayWnd = g_trayIcon.GetMessageWindow();
-        g_hotkeyManager.AddHotkey(*hotkeyOpt, [trayWnd]() {
+        // TSF mode: single toggle slot, never rebinding — slot id intentionally discarded.
+        (void)g_hotkeyManager.AddHotkey(*hotkeyOpt, [trayWnd]() {
             if (trayWnd) PostMessageW(trayWnd, WM_HOTKEY, 0, 0);
-        });
-        g_hotkeyManager.Initialize(hInstance);
+        }, /*runsOnAnyThread=*/true);
+        g_hotkeyManager.Initialize(hInstance, /*hookThreadId=*/0);
         NEXTKEY_LOG(L"Internal hotkey installed (ctrl=%d, shift=%d, alt=%d, win=%d, key=0x%02X)",
                     hotkeyOpt->ctrl, hotkeyOpt->shift, hotkeyOpt->alt, hotkeyOpt->win, hotkeyOpt->key);
     } else {
@@ -705,16 +831,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
             // calling thread — sibling threads in this file all call it; match them.
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             try {
-                Sleep(3000);
+                Sleep(30000);
                 auto info = UpdateChecker::CheckForUpdate();
                 if (info.available) {
-                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                    HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
                     if (trayWnd) {
                         auto* pInfo = new (std::nothrow) UpdateInfo(std::move(info));
                         if (pInfo) {
                             // WndProc returns true (1) on success and takes ownership of pInfo.
                             // If window was destroyed, SendMessageW returns 0 — we still own pInfo.
-                            if (!SendMessageW(trayWnd, WM_NEXUSKEY_UPDATE_AVAILABLE, 0,
+                            if (!SendMessageW(trayWnd, WM_VKEY_UPDATE_AVAILABLE, 0,
                                               reinterpret_cast<LPARAM>(pInfo))) {
                                 delete pInfo;
                             }
@@ -756,6 +882,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     CoUninitialize();
 #endif
 
+    // Catch graceful exits that didn't go through the tray-Exit branch (e.g.
+    // WM_CLOSE from the updater handover) so the watchdog skips respawn.
+    // Idempotent — safe even if SignalGracefulShutdown was already called.
+    // Heartbeat thread is stopped by ~WatchdogController via ~HeartbeatPublisher.
+    g_watchdog.SignalGracefulShutdown();
+
     NEXTKEY_LOG(L"Exiting");
     CloseHandle(hMutex);
     return 0;
@@ -776,6 +908,7 @@ static void ApplyConfigChange(const TypingConfig& config) {
             state.spellCheck = config.spellCheckEnabled ? 1 : 0;
             state.codeTable = static_cast<uint8_t>(config.codeTable);
             state.SetFeatureFlags(EncodeFeatureFlags(config));
+            state.diagFlags = config.perfHistogramEnabled ? DiagFlags::PERF_HISTOGRAM : 0;
             state.configGeneration++;  // HookEngine detects on next keystroke
             sm.Write(state);
         }
@@ -789,7 +922,7 @@ static void ApplyConfigChange(const TypingConfig& config) {
 
     // 4. Notify Settings dialog (if open) to refresh UI
     if (HWND settingsWnd = GetSettingsHwnd()) {
-        PostMessageW(settingsWnd, WM_NEXUSKEY_CONFIG_CHANGED, 0, 0);
+        PostMessageW(settingsWnd, WM_VKEY_CONFIG_CHANGED, 0, 0);
     }
 }
 
@@ -800,11 +933,11 @@ void OnMenuCommand(TrayMenuId id) {
             break;
 
         case TrayMenuId::About:
-            SpawnSubprocess(L"NexusKey - About", L"--about");
+            SpawnSubprocess(L"VKey - About", L"--about");
             break;
 
         case TrayMenuId::ToggleMode:
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
             g_hookEngine.ToggleVietnameseMode();
 #else
             g_sharedState.ToggleFlag(SharedFlags::VIETNAMESE_MODE);
@@ -835,14 +968,14 @@ void OnMenuCommand(TrayMenuId id) {
         }
 
         case TrayMenuId::MacroTable:
-            SpawnSubprocess(L"NexusKey - Macro Table", L"--macro");
+            SpawnSubprocess(L"VKey - Macro Table", L"--macro");
             break;
 
         case TrayMenuId::ConvertTool:
-            SpawnSubprocess(L"NexusKey - Convert Tool", L"--convert");
+            SpawnSubprocess(L"VKey - Convert Tool", L"--convert");
             break;
 
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
         case TrayMenuId::QuickConvert:
             if (g_quickConvert) {
                 g_quickConvert->Execute();
@@ -852,7 +985,9 @@ void OnMenuCommand(TrayMenuId id) {
 
         case TrayMenuId::InputTelex:
         case TrayMenuId::InputVNI:
-        case TrayMenuId::InputSimpleTelex: {
+        case TrayMenuId::InputSimpleTelex:
+        case TrayMenuId::InputCombined:
+        case TrayMenuId::InputUserDefined: {
             auto config = ConfigManager::LoadOrDefault();
             int method = static_cast<int>(id) - static_cast<int>(TrayMenuId::InputTelex);
             config.inputMethod = static_cast<InputMethod>(method);
@@ -862,6 +997,8 @@ void OnMenuCommand(TrayMenuId id) {
 
         case TrayMenuId::Exit:
             TerminateAllSubprocesses();
+            // Tell watchdog this is a user-initiated quit — skip respawn.
+            g_watchdog.SignalGracefulShutdown();
             g_running.store(false, std::memory_order_relaxed);
             PostQuitMessage(0);
             break;
@@ -870,13 +1007,17 @@ void OnMenuCommand(TrayMenuId id) {
             RestartWindowsWithPrompt(g_trayIcon.GetMessageWindow());
             break;
 
+        case TrayMenuId::ToggleWatchdog:
+            g_watchdog.Toggle(g_trayIcon.GetMessageWindow());
+            break;
+
         default: {
             // Code table menu items (1010-1014)
             auto rawId = static_cast<UINT>(id);
             if (rawId >= static_cast<UINT>(TrayMenuId::CodeTableUnicode) &&
                 rawId <= static_cast<UINT>(TrayMenuId::CodeTableCP1258)) {
                 auto ct = static_cast<CodeTable>(rawId - static_cast<UINT>(TrayMenuId::CodeTableUnicode));
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
                 g_hookEngine.SetCodeTable(ct);
 #endif
                 // Update SharedState immediately (source of truth at runtime)
@@ -895,7 +1036,7 @@ void OnMenuCommand(TrayMenuId id) {
 
                 // Notify Settings dialog to refresh UI
                 if (HWND settingsWnd = GetSettingsHwnd()) {
-                    PostMessageW(settingsWnd, WM_NEXUSKEY_CONFIG_CHANGED, 0, 0);
+                    PostMessageW(settingsWnd, WM_VKEY_CONFIG_CHANGED, 0, 0);
                 }
                 NEXTKEY_LOG(L"Code table changed via tray menu: %d", static_cast<int>(ct));
             }
@@ -909,7 +1050,7 @@ void SpawnSettingsSubprocess() {
     HWND existing = GetSettingsHwnd();
     if (existing) {
         SetForegroundWindow(existing);
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
         NotifySettingsMode(g_hookEngine.IsVietnameseMode());
 #endif
         return;
@@ -921,7 +1062,7 @@ void SpawnSettingsSubprocess() {
 
     // Build command line (pass current V/E mode to subprocess)
     wchar_t cmdLine[MAX_PATH + 64];
-#ifdef NEXUSKEY_HOOK_ENGINE
+#ifdef VKEY_HOOK_ENGINE
     int mode = g_hookEngine.IsVietnameseMode() ? 1 : 0;
 #else
     int mode = (g_sharedState.ReadFlags() & SharedFlags::VIETNAMESE_MODE) ? 1 : 0;

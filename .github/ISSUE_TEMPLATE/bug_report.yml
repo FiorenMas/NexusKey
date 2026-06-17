@@ -12,6 +12,7 @@ body:
         - Windows 10
         - Windows 11
         - Khác (ghi rõ bên dưới)
+      default: 1
     validations:
       required: true
 
@@ -32,14 +33,14 @@ body:
       label: Mô tả lỗi
       placeholder: Gõ gì, ở app nào, bị gì
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: settings
     attributes:
       label: Toàn bộ settings
       description: |
-        BẮT BUỘC: cung cấp settings theo 1 trong 2 cách:
+        Cung cấp settings theo 1 trong 2 cách:
         - Dán nội dung file .toml
         - Hoặc chụp màn hình
       placeholder: |
@@ -51,7 +52,7 @@ body:
   - type: textarea
     id: detail
     attributes:
-      label: Chi tiết thêm (optional)
+      label: Thông tin thêm
       description: Log, ảnh, video, hoặc bất kỳ thông tin nào giúp debug
     validations:
       required: false

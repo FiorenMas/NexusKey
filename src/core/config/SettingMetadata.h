@@ -1,6 +1,6 @@
-// NexusKey - Setting Metadata Table
+// VKey - Setting Metadata Table
 // Shared mapping for dual-UI (Sciter + Classic Win32) settings binding
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -41,40 +41,56 @@ struct SettingMeta {
     uint16_t       win32Id;     // IDC_ control ID (0 = no control)
     uint8_t        tab;         // 0=Cơ bản, 1=Phím tắt, 2=Hệ thống
     uint8_t        column;      // 0=left, 1=right
+    // Dropdown items, null-terminated parallel arrays. nullptr for non-dropdowns.
+    const wchar_t* const* itemsVi = nullptr;
+    const wchar_t* const* itemsEn = nullptr;
 };
 
+// ── Dropdown item arrays (null-terminated) ─────────────────────────
+inline constexpr const wchar_t* kIconStyleItemsVi[] = {
+    L"Màu mặc định", L"Nền tối", L"Nền sáng", L"Tự chọn", L"Tự động", nullptr
+};
+inline constexpr const wchar_t* kIconStyleItemsEn[] = {
+    L"Default color", L"Dark", L"Light", L"Custom", L"Auto", nullptr
+};
+inline constexpr const wchar_t* kStartupModeItemsVi[] = {
+    L"Tiếng Việt", L"Tiếng Anh", L"Ghi nhớ", nullptr
+};
+inline constexpr const wchar_t* kStartupModeItemsEn[] = {
+    L"Vietnamese", L"English", L"Remember", nullptr
+};
 // ── Helper macros to reduce verbosity ──────────────────────────────
-#define NK_TYPING(id, field, vi, en, tip, tip_en, idc, tab, col)             \
-    { L##id, ::NextKey::SettingType::Toggle, ::NextKey::SettingOwner::Typing, \
-      static_cast<ptrdiff_t>(offsetof(::NextKey::TypingConfig, field)),       \
-      L##vi, L##en, tip, tip_en, idc, tab, col }
+// Master macro — every setting kind funnels through here.
+#define NK_SETTING(type_, owner_, cfg, id, field, vi, en, tip, tipE, idc, tab, col, itemsV, itemsE) \
+    { L##id, ::NextKey::SettingType::type_, ::NextKey::SettingOwner::owner_, \
+      static_cast<ptrdiff_t>(offsetof(::NextKey::cfg, field)),                \
+      L##vi, L##en, tip, tipE, idc, tab, col, itemsV, itemsE }
 
-#define NK_HOTKEY(id, field, vi, en, tip, tip_en, idc, tab, col)             \
-    { L##id, ::NextKey::SettingType::Toggle, ::NextKey::SettingOwner::Hotkey, \
-      static_cast<ptrdiff_t>(offsetof(::NextKey::HotkeyConfig, field)),       \
-      L##vi, L##en, tip, tip_en, idc, tab, col }
+#define NK_TYPING(id, field, vi, en, tip, tipE, idc, tab, col) \
+    NK_SETTING(Toggle, Typing, TypingConfig, id, field, vi, en, tip, tipE, idc, tab, col, nullptr, nullptr)
 
-#define NK_SYSTEM(id, field, vi, en, tip, tip_en, idc, tab, col)             \
-    { L##id, ::NextKey::SettingType::Toggle, ::NextKey::SettingOwner::System, \
-      static_cast<ptrdiff_t>(offsetof(::NextKey::SystemConfig, field)),        \
-      L##vi, L##en, tip, tip_en, idc, tab, col }
+#define NK_HOTKEY(id, field, vi, en, tip, tipE, idc, tab, col) \
+    NK_SETTING(Toggle, Hotkey, HotkeyConfig, id, field, vi, en, tip, tipE, idc, tab, col, nullptr, nullptr)
 
-#define NK_DROPDOWN(id, field, vi, en, tip, tip_en, idc, tab, col)           \
-    { L##id, ::NextKey::SettingType::Dropdown, ::NextKey::SettingOwner::System, \
-      static_cast<ptrdiff_t>(offsetof(::NextKey::SystemConfig, field)),        \
-      L##vi, L##en, tip, tip_en, idc, tab, col }
+#define NK_SYSTEM(id, field, vi, en, tip, tipE, idc, tab, col) \
+    NK_SETTING(Toggle, System, SystemConfig, id, field, vi, en, tip, tipE, idc, tab, col, nullptr, nullptr)
 
-#define NK_ACTION(id, vi, en, tip, tip_en, idc, tab, col)                    \
-    { L##id, ::NextKey::SettingType::Action, ::NextKey::SettingOwner::UI,      \
-      0,                                                                       \
-      L##vi, L##en, tip, tip_en, idc, tab, col }
+#define NK_DROPDOWN(id, field, vi, en, tip, tipE, idc, tab, col, itemsV, itemsE) \
+    NK_SETTING(Dropdown, System, SystemConfig, id, field, vi, en, tip, tipE, idc, tab, col, itemsV, itemsE)
+
+#define NK_TYPING_DROPDOWN(id, field, vi, en, tip, tipE, idc, tab, col, itemsV, itemsE) \
+    NK_SETTING(Dropdown, Typing, TypingConfig, id, field, vi, en, tip, tipE, idc, tab, col, itemsV, itemsE)
+
+#define NK_ACTION(id, vi, en, tip, tipE, idc, tab, col) \
+    { L##id, ::NextKey::SettingType::Action, ::NextKey::SettingOwner::UI, \
+      0, L##vi, L##en, tip, tipE, idc, tab, col, nullptr, nullptr }
 
 /// All toggle settings, ordered by tab → column → visual position
 inline constexpr SettingMeta kSettings[] = {
 
     // ── Tab 0: Bảng gõ — Left column (col 0) ──
     NK_TYPING("modern-ortho",         modernOrtho,
-              "Đặt dấu oà, uý",       "Modern tone placement",
+              "Đặt dấu kiểu mới (oà, uý)", "New diacritics style (oà, uý)",
               nullptr, nullptr,                                          2202, 0, 0),
     NK_TYPING("allow-english-bypass", allowEnglishBypass,
               "Gõ tự do",             "Bypass English blocking",
@@ -94,31 +110,47 @@ inline constexpr SettingMeta kSettings[] = {
     NK_TYPING("restore-key",          autoRestoreEnabled,
               "Tự khôi phục phím sai","Restore key on invalid",
               nullptr, nullptr,                                          2205, 0, 0),
+    NK_TYPING("cjk-auto-switch",      cjkAutoSwitch,
+              "Tự tắt khi bàn phím CJK", "Auto-disable on CJK layout",
+              L"Tự sang E khi đang dùng bàn phím Trung/Nhật/Hàn",
+              L"Switch to E when a Chinese/Japanese/Korean layout is active",
+                                                                         2209, 0, 0),
 
     // ── Tab 0: Bảng gõ — Right column (col 1) ──
     NK_TYPING("beep-sound",           beepOnSwitch,
               "Tiếng bíp khi chuyển",   "Beep on switch",
               L"Phát âm báo khi chuyển đổi ngôn ngữ",
               L"Play sound when switching language",                     2211, 0, 1),
-    NK_TYPING("temp-off-openkey",     tempOffByAlt,
-              "Tạm tắt bộ gõ bằng Alt",    "Alt temps off Vietnamese",
-              L"Nhấn đúp phím Alt để tạm tắt tiếng Việt (tránh xung đột menu ứng dụng)",
-              L"Double-tap Alt to disable Vietnamese (avoid app menu conflicts)", 2218, 0, 1),
+    NK_TYPING("suggest-keep-chars",   suggestKeepChars,
+              "BS giữ chữ khi có gợi ý", "BS keeps chars on suggest",
+              L"Khi tắt gợi ý của trình duyệt bằng Backspace, giữ chữ đã gõ. Cảnh báo: có thể sai dấu nếu gõ tiếp ngay sau BS.",
+              L"When dismissing a browser suggestion via Backspace, preserve typed chars. Warning: tone placement may be wrong if you keep typing right after BS.",
+                                                                         2220, 0, 1),
     NK_TYPING("smart-switch",         smartSwitch,
               "Lưu chế độ gõ theo app",   "Smart input switch",
               L"Tự động ghi nhớ chế độ gõ cho từng ứng dụng",
               L"Auto-remember input mode per app",                       2206, 0, 1),
     NK_TYPING("exclude-apps",         excludeApps,
-              "Loại trừ ứng dụng",        "Exclude apps",
-              L"Tắt gõ tiếng Việt cho ứng dụng trong danh sách",
-              L"Disable Vietnamese for listed apps",                     2207, 0, 1),
+              "Khoá chế độ E/V theo app",        "Exclude apps",
+              L"Khoá cứng chế độ gõ E hoặc V cho từng ứng dụng (vô hiệu hoá phím chuyển khi ở trong app)",
+              L"Lock E or V typing mode for each application (disables hotkeys inside the app)",                     2207, 0, 1),
     NK_ACTION("btn-exclude-apps",     "...", "",
               nullptr, nullptr,                                          2502, 0, 1),
+    NK_TYPING("tsf-apps",             tsfApps,
+              "Dùng TSF cho danh sách", "Use TSF for listed apps",
+              L"Các app trong danh sách sẽ dùng engine TSF, các app khác dùng Hook",
+              L"Listed apps use TSF engine; others use the Hook",        2210, 0, 1),
+    NK_ACTION("btn-tsf-apps",         "...", "",
+              nullptr, nullptr,                                          2507, 0, 1),
     // ── Action buttons (grouped at bottom) ──
     NK_ACTION("btn-app-overrides",    "Cấu hình từng ứng dụng", "Per-app config",
               nullptr, nullptr,                                          2500, 0, 1),
     NK_ACTION("btn-spell-exclusions", "Loại trừ chính tả...", "Spell exclusions...",
               nullptr, nullptr,                                          2801, 0, 1),
+    NK_ACTION("btn-hotkeys",          "Cấu hình phím tắt", "Configure hotkeys",
+              L"Quản lý phím gán cho 3 thao tác: hủy đang gõ, bỏ qua gõ tắt, bật/tắt bộ gõ",
+              L"Manage triggers for 3 intents: cancel composition, skip macro, toggle IME",
+                                                                         2506, 0, 1),
 
     // ── Tab 1: Gõ tắt (col 0) ──
     NK_TYPING("use-macro",            macroEnabled,
@@ -130,10 +162,6 @@ inline constexpr SettingMeta kSettings[] = {
     NK_TYPING("auto-caps-macro",      autoCapsMacro,
               "Tự động viết hoa theo phím", "Auto capitalize macros",
               nullptr, nullptr,                                          2219, 1, 0),
-    NK_TYPING("cancel-macro-esc",     tempOffMacroByEsc,
-              "Tạm bỏ gõ tắt bằng Esc",     "Temp skip macro by Esc",
-              L"Nhấn Esc trước khi gõ để tạm bỏ qua gõ tắt cho từ tiếp theo",
-              L"Press Esc before typing to skip macro for the next word", 2220, 1, 0),
     NK_ACTION("btn-macro-table",      "Bảng gõ tắt", "Macro Table",
               nullptr, nullptr,                                          2503, 1, 0),
 
@@ -154,16 +182,16 @@ inline constexpr SettingMeta kSettings[] = {
     // ── Tab 1: Gõ tắt (col 1) ──
     NK_TYPING("quick-telex",          quickConsonant,
               "Gõ nhanh phụ âm kép",  "Quick double consonant",
-              L"cc=ch, gg=gi, kk=kh, nn=ng, qq=qu, pp=ph, tt=th, uu=\u01B0\u01A1",
-              L"cc=ch, gg=gi, kk=kh, nn=ng, qq=qu, pp=ph, tt=th, uu=\u01B0\u01A1", 2214, 1, 1),
+              L"cc=ch, gg=gi, kk=kh, nn=ng, qq=qu, pp=ph, tt=th, uu=ươ",
+              L"cc=ch, gg=gi, kk=kh, nn=ng, qq=qu, pp=ph, tt=th, uu=ươ", 2214, 1, 1),
     NK_TYPING("quick-start",          quickStartConsonant,
               "Gõ tắt phụ âm đầu",    "Quick start consonant",
-              L"f\u2192ph, j\u2192gi, w\u2192qu",
-              L"f\u2192ph, j\u2192gi, w\u2192qu",                       2215, 1, 1),
+              L"f→ph, j→gi, w→qu",
+              L"f→ph, j→gi, w→qu",                       2215, 1, 1),
     NK_TYPING("quick-end",            quickEndConsonant,
               "Gõ tắt phụ âm cuối",   "Quick end consonant",
-              L"g\u2192ng, h\u2192nh, k\u2192ch",
-              L"g\u2192ng, h\u2192nh, k\u2192ch",                       2216, 1, 1),
+              L"g→ng, h→nh, k→ch",
+              L"g→ng, h→nh, k→ch",                       2216, 1, 1),
 
     // ── Tab 2: Hệ thống — Left column (col 0) ──
     NK_SYSTEM("run-startup",          runAtStartup,
@@ -172,7 +200,8 @@ inline constexpr SettingMeta kSettings[] = {
     NK_DROPDOWN("startup-mode",       startupMode,
               "Chế độ mặc định",      "Default mode",
               L"Chế độ gõ khi khởi động ứng dụng",
-              L"Typing mode when app starts",                            2409, 2, 0),
+              L"Typing mode when app starts",                            2409, 2, 0,
+              kStartupModeItemsVi, kStartupModeItemsEn),
     NK_SYSTEM("show-on-startup",      showOnStartup,
               "Bật bảng này khi khởi động", "Show window on startup",
               nullptr, nullptr,                                          2403, 2, 0),
@@ -195,7 +224,8 @@ inline constexpr SettingMeta kSettings[] = {
               L"Show floating V/E indicator on screen, useful for fullscreen apps", 2405, 2, 1),
     NK_DROPDOWN("custom-icon-style",  iconStyle,
               "Tuỳ chỉnh icon",       "Icon Style",
-              nullptr, nullptr,                                          2408, 2, 1),
+              nullptr, nullptr,                                          2408, 2, 1,
+              kIconStyleItemsVi, kIconStyleItemsEn),
     NK_SYSTEM("check-update",         autoCheckUpdate,
               "Tự kiểm tra cập nhật", "Auto check update",
               L"Tự động kiểm tra phiên bản mới khi khởi động ứng dụng",
@@ -206,9 +236,19 @@ inline constexpr SettingMeta kSettings[] = {
               "Luôn dùng giao diện sáng", "Always use light theme",
               L"Bỏ qua chế độ tối của Windows, luôn hiển thị giao diện sáng",
               L"Ignore Windows dark mode, always show light theme",     2410, 2, 1),
+    NK_TYPING("debug-log",            debugLogEnabled,
+              "Bật debug log",        "Enable debug log",
+              L"Ghi log chi tiết để gửi kèm khi báo lỗi (VKey_*.log cạnh VKey.exe)",
+              L"Write detailed log to attach when reporting bugs (VKey_*.log next to VKey.exe)",
+                                                                         2411, 2, 1),
+    NK_ACTION("btn-open-log-folder",  "Mở log", "Log folder",
+              L"Mở thư mục chứa file log",
+              L"Open log folder",                                        2505, 2, 1),
 };
 
+#undef NK_SETTING
 #undef NK_TYPING
+#undef NK_TYPING_DROPDOWN
 #undef NK_HOTKEY
 #undef NK_SYSTEM
 #undef NK_DROPDOWN

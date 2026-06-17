@@ -202,20 +202,70 @@
     min-width: 28px;
 }
 
-.hotkey-input {
-    width: 48px;
-    height: 20px;
-    box-shadow: inset 0 0 0 1px var(--border-input);
-    border-radius: 4px;
-    text-align: center;
-    font-size: 12px;
-    background: var(--bg-card-solid);
-    color: var(--text-primary);
-    outline: none;
+/* Record-hotkey button — replaces the old 4-modifier-toggle + char-input
+   row. Opens shared capture overlay (Step 5). */
+.hotkey-controls {
+    flow: horizontal;
+    width: 100%;
+    gap: 6px;
+    align-items: center;
 }
 
-.hotkey-input:focus {
-    border-color: var(--color-primary);
+.btn-record-hotkey {
+    flow: horizontal;
+    vertical-align: middle;
+    width: *;
+    height: 32px;
+    padding: 0 12px;
+    border: none;
+    box-shadow: inset 0 0 0 1px var(--border-input);
+    border-radius: 6px;
+    background: var(--bg-card-solid);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+    transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn-record-hotkey:hover {
+    box-shadow: inset 0 0 0 1px var(--color-primary);
+    background: var(--color-primary-light);
+}
+
+.btn-clear-hotkey {
+    width: 56px;
+    height: 32px;
+    padding: 0 8px;
+    border: none;
+    box-shadow: inset 0 0 0 1px var(--border-input);
+    border-radius: 6px;
+    background: var(--bg-card-solid);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn-clear-hotkey:hover {
+    box-shadow: inset 0 0 0 1px var(--color-primary);
+    background: var(--color-primary-light);
+}
+
+.btn-clear-hotkey:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.hotkey-display {
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-weight: 600;
+    color: var(--color-primary);
+}
+
+.record-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: *;
 }
 
 /* File Selection Section */

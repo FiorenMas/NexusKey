@@ -1,5 +1,5 @@
-// NexusKey - TSF Global Definitions
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Global Definitions
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -23,12 +23,12 @@ extern HINSTANCE g_hInstance;
 extern LONG g_dllRefCount;
 
 // String constants
-constexpr const wchar_t* TEXT_SERVICE_DESCRIPTION = L"NexusKey Vietnamese IME";
+constexpr const wchar_t* TEXT_SERVICE_DESCRIPTION = L"VKey Vietnamese IME";
 
 // CLSID as string for registry checks (matches CLSID_TextService in Globals.cpp)
-// {D84D1E5B-8F2C-4B1A-9D3E-6F7A8B9C0D1E}
-constexpr const wchar_t* CLSID_TEXTSERVICE_STRING = L"{D84D1E5B-8F2C-4B1A-9D3E-6F7A8B9C0D1E}";
-// Use English keyboard as base - NexusKey handles Vietnamese conversion via Telex
+// {DEB18BD1-2331-4F2A-B030-DA9EB0093683}
+constexpr const wchar_t* CLSID_TEXTSERVICE_STRING = L"{DEB18BD1-2331-4F2A-B030-DA9EB0093683}";
+// Use English keyboard as base - VKey handles Vietnamese conversion via Telex
 constexpr LANGID TEXTSERVICE_LANGID = MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
 constexpr ULONG TEXTSERVICE_ICON_INDEX = 0;
 

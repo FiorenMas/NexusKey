@@ -1,5 +1,5 @@
-// NexusKey Classic — Spell Check Exclusions Dialog
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Spell Check Exclusions Dialog
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -28,6 +28,8 @@ private:
     void PopulateList();
     void AddEntry(const std::wstring& text);
     void DeleteSelected();
+    void ImportFromFile();
+    void ExportToFile();
 
     void LoadData();
     void SaveData();
@@ -53,11 +55,13 @@ private:
     HWND editEntry_ = nullptr;
     HWND btnAdd_ = nullptr;
     HWND btnDelete_ = nullptr;
+    HWND btnImport_ = nullptr;
+    HWND btnExport_ = nullptr;
 
     // State
     std::vector<std::wstring> entries_;
 
-    static constexpr const wchar_t* kClassName = L"NexusKeySpellExclusions";
+    static constexpr const wchar_t* kClassName = L"VKeySpellExclusions";
 };
 
 }  // namespace NextKey::Classic

@@ -1,5 +1,5 @@
-// NexusKey Classic — Convert Tool Dialog
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Convert Tool Dialog
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -26,6 +26,7 @@ private:
     void PopulateFromConfig();
     void ReadToConfig();
     void SaveConfig();
+    void RefreshHotkeyDisplay();
     void DoConvert();
     void BrowseFile(bool isSource);
     void UpdateFileMode();
@@ -57,6 +58,7 @@ private:
     HWND checkAlertDone_ = nullptr;
     HWND checkAutoPaste_ = nullptr;
     HWND checkSequential_ = nullptr;
+    HWND checkEnableLog_ = nullptr;
 
     // Encoding
     HWND labelEncodingSource_ = nullptr;
@@ -65,12 +67,9 @@ private:
     HWND comboDest_ = nullptr;
 
     // Hotkey
-    HWND labelHotkey_ = nullptr;
-    HWND checkHkCtrl_ = nullptr;
-    HWND checkHkAlt_ = nullptr;
-    HWND checkHkShift_ = nullptr;
-    HWND checkHkWin_ = nullptr;
-    HWND editHkKey_ = nullptr;
+    HWND labelHotkey_      = nullptr;
+    HWND btnRecordHotkey_  = nullptr;  // shows current binding + opens capture modal
+    HWND btnClearHotkey_   = nullptr;  // clears binding (disabled when no hotkey set)
 
     // Source mode (clipboard / file)
     HWND radioClipboard_ = nullptr;
@@ -89,7 +88,7 @@ private:
 
     ConvertConfig config_{};
 
-    static constexpr const wchar_t* kClassName = L"NexusKeyConvertTool";
+    static constexpr const wchar_t* kClassName = L"VKeyConvertTool";
 };
 
 }  // namespace NextKey::Classic

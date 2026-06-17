@@ -1,7 +1,7 @@
-// NexusKey - Code Table Converter Implementation
+// VKey - Code Table Converter Implementation
 // Copyright (c) 2024-2026 PhatMT. All rights reserved.
-// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-NexusKey-Commercial
-// Dual-licensed: GPL-3.0 for open-source use, commercial license for proprietary use.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-VKey-Commercial
+// Dual-licensed: AGPL-3.0 for open-source use, commercial license for proprietary use.
 // See LICENSE and LICENSE-COMMERCIAL in the project root.
 //
 // Mapping tables extracted from OpenKey Vietnamese.cpp _codeTable[0..4].
@@ -32,8 +32,17 @@ namespace NextKey {
 // (hex literals are int, wchar_t/uint16_t would trigger narrowing)
 using CodeMap = std::unordered_map<uint32_t, uint32_t>;
 
+// Forward maps are wrapped in Meyers-singleton accessors (function-local statics)
+// rather than eager namespace-scope objects: std::unordered_map has a non-trivial
+// ctor, so a namespace-scope instance would heap-allocate ~96 nodes per map during
+// CRT startup, unconditionally. The convert feature is on-demand only (ConvertChar
+// runs only when codeTable != Unicode, never on the per-keystroke hot path), so the
+// majority Unicode-output user should never pay for these. Lazy init defers the
+// allocation to first use. Mirrors the lazy reverse-map pattern below.
+
 // TCVN3 (ABC) — always 1 byte output per Vietnamese character
-static const CodeMap kTcvn3Map = {
+static const CodeMap& GetTcvn3Map() {
+    static const CodeMap kTcvn3Map = {
     // KEY_A: Â, â, Ă, ă, Á, á, À, à, Ả, ả, Ã, ã, Ạ, ạ
     {0x00C2, 0xA2}, {0x00E2, 0xA9}, {0x0102, 0xA1}, {0x0103, 0xA8},
     {0x00C1, 0xB8}, {0x00E1, 0xB8}, {0x00C0, 0xB5}, {0x00E0, 0xB5},
@@ -88,10 +97,13 @@ static const CodeMap kTcvn3Map = {
     {0x00DD, 0xFD}, {0x00FD, 0xFD}, {0x1EF2, 0xFA}, {0x1EF3, 0xFA},
     {0x1EF6, 0xFB}, {0x1EF7, 0xFB}, {0x1EF8, 0xFC}, {0x1EF9, 0xFC},
     {0x1EF4, 0xFE}, {0x1EF5, 0xFE},
-};
+    };
+    return kTcvn3Map;
+}
 
 // VNI Windows — HIBYTE:LOBYTE encoding, LOBYTE first
-static const CodeMap kVniMap = {
+static const CodeMap& GetVniMap() {
+    static const CodeMap kVniMap = {
     // KEY_A: Â, â, Ă, ă, Á, á, À, à, Ả, ả, Ã, ã, Ạ, ạ
     {0x00C2, 0xC241}, {0x00E2, 0xE261}, {0x0102, 0xCA41}, {0x0103, 0xEA61},
     {0x00C1, 0xD941}, {0x00E1, 0xF961}, {0x00C0, 0xD841}, {0x00E0, 0xF861},
@@ -146,14 +158,17 @@ static const CodeMap kVniMap = {
     {0x00DD, 0xD959}, {0x00FD, 0xF979}, {0x1EF2, 0xD859}, {0x1EF3, 0xF879},
     {0x1EF6, 0xDB59}, {0x1EF7, 0xFB79}, {0x1EF8, 0xD559}, {0x1EF9, 0xF579},
     {0x1EF4, 0x00CE}, {0x1EF5, 0x00EE},
-};
+    };
+    return kVniMap;
+}
 
 // Unicode Compound — base char + combining mark
 // HIBYTE encodes the combining mark index, LOBYTE is the base character
 // Combining marks: 0x20=sắc(0x0301), 0x40=huyền(0x0300), 0x60=hỏi(0x0309),
 //                  0x80=ngã(0x0303), 0xA0=nặng(0x0323)
 // Special: values <= 0xFF or HIBYTE < 0x20 → single char (precomposed, no tone)
-static const CodeMap kUnicodeCompoundMap = {
+static const CodeMap& GetUnicodeCompoundMap() {
+    static const CodeMap kUnicodeCompoundMap = {
     // KEY_A: Â, â, Ă, ă, Á, á, À, à, Ả, ả, Ã, ã, Ạ, ạ
     {0x00C2, 0x00C2}, {0x00E2, 0x00E2}, {0x0102, 0x0102}, {0x0103, 0x0103},
     {0x00C1, 0x2041}, {0x00E1, 0x2061}, {0x00C0, 0x4041}, {0x00E0, 0x4061},
@@ -208,10 +223,13 @@ static const CodeMap kUnicodeCompoundMap = {
     {0x00DD, 0x2059}, {0x00FD, 0x2079}, {0x1EF2, 0x4059}, {0x1EF3, 0x4079},
     {0x1EF6, 0x6059}, {0x1EF7, 0x6079}, {0x1EF8, 0x8059}, {0x1EF9, 0x8079},
     {0x1EF4, 0xA059}, {0x1EF5, 0xA079},
-};
+    };
+    return kUnicodeCompoundMap;
+}
 
 // Vietnamese Locale (CP 1258) — similar 2-byte encoding as VNI
-static const CodeMap kCp1258Map = {
+static const CodeMap& GetCp1258Map() {
+    static const CodeMap kCp1258Map = {
     // KEY_A: Â, â, Ă, ă, Á, á, À, à, Ả, ả, Ã, ã, Ạ, ạ
     {0x00C2, 0x00C2}, {0x00E2, 0x00E2}, {0x0102, 0x00C3}, {0x0103, 0x00E3},
     {0x00C1, 0xEC41}, {0x00E1, 0xEC61}, {0x00C0, 0xCC41}, {0x00E0, 0xCC61},
@@ -266,7 +284,9 @@ static const CodeMap kCp1258Map = {
     {0x00DD, 0xEC59}, {0x00FD, 0xEC79}, {0x1EF2, 0xCC59}, {0x1EF3, 0xCC79},
     {0x1EF6, 0xD259}, {0x1EF7, 0xD279}, {0x1EF8, 0xDE59}, {0x1EF9, 0xDE79},
     {0x1EF4, 0xF259}, {0x1EF5, 0xF279},
-};
+    };
+    return kCp1258Map;
+}
 
 // Unicode Compound combining marks: sắc, huyền, hỏi, ngã, nặng
 static constexpr wchar_t kCombiningMarks[] = {0x0301, 0x0300, 0x0309, 0x0303, 0x0323};
@@ -335,29 +355,33 @@ EncodedChar CodeTableConverter::ConvertChar(wchar_t ch, CodeTable table) noexcep
 
     switch (table) {
         case CodeTable::TCVN3: {
-            auto it = kTcvn3Map.find(key);
-            if (it != kTcvn3Map.end()) {
+            const auto& m = GetTcvn3Map();
+            auto it = m.find(key);
+            if (it != m.end()) {
                 return EncodedChar{{static_cast<wchar_t>(it->second), 0}, 1};
             }
             break;
         }
         case CodeTable::VNIWindows: {
-            auto it = kVniMap.find(key);
-            if (it != kVniMap.end()) {
+            const auto& m = GetVniMap();
+            auto it = m.find(key);
+            if (it != m.end()) {
                 return DecodeLoHi(it->second);
             }
             break;
         }
         case CodeTable::UnicodeCompound: {
-            auto it = kUnicodeCompoundMap.find(key);
-            if (it != kUnicodeCompoundMap.end()) {
+            const auto& m = GetUnicodeCompoundMap();
+            auto it = m.find(key);
+            if (it != m.end()) {
                 return DecodeCompound(it->second);
             }
             break;
         }
         case CodeTable::VietnameseLocale: {
-            auto it = kCp1258Map.find(key);
-            if (it != kCp1258Map.end()) {
+            const auto& m = GetCp1258Map();
+            auto it = m.find(key);
+            if (it != m.end()) {
                 return DecodeLoHi(it->second);
             }
             break;
@@ -390,7 +414,7 @@ static bool IsLowerViet(wchar_t ch) noexcept {
 static const ReverseMap& GetTcvn3Reverse() {
     static const auto map = [] {
         ReverseMap rev;
-        for (const auto& [unicode, tcvn3] : kTcvn3Map) {
+        for (const auto& [unicode, tcvn3] : GetTcvn3Map()) {
             auto wch = static_cast<wchar_t>(unicode);
             auto it = rev.find(tcvn3);
             if (it == rev.end()) {
@@ -437,12 +461,12 @@ static ReversePairMap BuildReversePairMap(const CodeMap& forward) {
 }
 
 static const ReversePairMap& GetVniReverse() {
-    static const auto map = BuildReversePairMap(kVniMap);
+    static const auto map = BuildReversePairMap(GetVniMap());
     return map;
 }
 
 static const ReversePairMap& GetCp1258Reverse() {
-    static const auto map = BuildReversePairMap(kCp1258Map);
+    static const auto map = BuildReversePairMap(GetCp1258Map());
     return map;
 }
 
@@ -450,7 +474,7 @@ static const ReversePairMap& GetCp1258Reverse() {
 static const ReverseMap& GetCompoundReverse() {
     static const auto map = [] {
         ReverseMap rev;
-        for (const auto& [unicode, encoded] : kUnicodeCompoundMap) {
+        for (const auto& [unicode, encoded] : GetUnicodeCompoundMap()) {
             auto wch = static_cast<wchar_t>(unicode);
             auto decoded = DecodeCompound(encoded);
             if (decoded.count == 2) {
@@ -625,7 +649,7 @@ std::wstring CodeTableConverter::ToLower(const std::wstring& input) noexcept {
     return output;
 }
 
-std::wstring CodeTableConverter::CapitalizeFirstOfSentence(const std::wstring& input) noexcept {
+std::wstring CodeTableConverter::ToSentenceCase(const std::wstring& input) noexcept {
     std::wstring output;
     output.reserve(input.size());
     bool atSentenceStart = true;
@@ -634,7 +658,7 @@ std::wstring CodeTableConverter::CapitalizeFirstOfSentence(const std::wstring& i
             output += ToUpperVietnamese(ch);
             atSentenceStart = false;
         } else {
-            output += ch;
+            output += IsAlpha(ch) ? ToLowerVietnamese(ch) : ch;
             if (ch == L'.' || ch == L'!' || ch == L'?' || ch == L'\n') {
                 atSentenceStart = true;
             }
@@ -643,7 +667,7 @@ std::wstring CodeTableConverter::CapitalizeFirstOfSentence(const std::wstring& i
     return output;
 }
 
-std::wstring CodeTableConverter::CapitalizeEachWord(const std::wstring& input) noexcept {
+std::wstring CodeTableConverter::ToTitleCase(const std::wstring& input) noexcept {
     std::wstring output;
     output.reserve(input.size());
     bool afterSpace = true;
@@ -652,7 +676,7 @@ std::wstring CodeTableConverter::CapitalizeEachWord(const std::wstring& input) n
             output += ToUpperVietnamese(ch);
             afterSpace = false;
         } else {
-            output += ch;
+            output += IsAlpha(ch) ? ToLowerVietnamese(ch) : ch;
             afterSpace = std::iswspace(ch) != 0;
         }
     }

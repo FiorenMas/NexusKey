@@ -1,5 +1,5 @@
-// NexusKey - Sciter SubDialog Base Class
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Sciter SubDialog Base Class
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Base class for simple Sciter subdialogs that run as subprocesses.
 // Extracts all common boilerplate: resource loading, window setup,

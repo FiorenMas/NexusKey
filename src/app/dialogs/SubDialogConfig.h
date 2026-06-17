@@ -1,5 +1,5 @@
-// NexusKey - SubDialog Configuration
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - SubDialog Configuration
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -10,7 +10,7 @@ namespace NextKey {
 /// Configuration for SciterSubDialog windows
 struct SubDialogConfig {
     const wchar_t* htmlPath;          // e.g. "this://app/excludedapps/excludedapps.html"
-    const wchar_t* windowTitle;       // e.g. "NexusKey - Excluded Apps"
+    const wchar_t* windowTitle;       // e.g. "VKey - Excluded Apps"
     int baseWidth = 360;
     int baseHeight = 420;
     HWND parentHwnd = nullptr;        // Center on parent (or screen if null)

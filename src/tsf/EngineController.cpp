@@ -1,12 +1,14 @@
-// NexusKey - Engine Controller Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Engine Controller Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "EngineController.h"
 #include "CompositionEditSession.h"
+#include "EscRestoreLastCommitSession.h"
 #include "InputScopeChecker.h"
 #include "Define.h"
 #include "core/engine/EngineFactory.h"
+#include "core/DigitLedWordDecision.h"
 #include <memory>
 
 namespace NextKey {
@@ -195,13 +197,29 @@ bool EngineController::WantKey(UINT vkCode, bool /*isKeyDown*/) {
 
     bool engineHasComp = engine_->Count() > 0;
 
+    // 1b. Digit-led word state machine — shared with HookEngine via
+    // core/DigitLedWordDecision.h. Arms when a digit lands at word start
+    // (VNI/Combined/UserDefined), bypasses subsequent keys, resets on
+    // whitespace/nav/Esc/BS/Delete. Modifiers (Ctrl/Alt/Win) handled by
+    // the early-return at line 192 above — never reach this state machine.
+    {
+        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        DigitLedInputs in{vkCode, shift, !engineHasComp, config_.inputMethod, digitLedWord_};
+        switch (DecideDigitLed(in)) {
+            case DigitLedDecision::Arm:    digitLedWord_ = true;  return false;
+            case DigitLedDecision::Bypass:                        return false;
+            case DigitLedDecision::Reset:  digitLedWord_ = false; return false;
+            case DigitLedDecision::Continue: break;
+        }
+    }
+
     // 2. We want A-Z keys for typing processing
     if (vkCode >= 0x41 && vkCode <= 0x5A) {
         return true;
     }
 
-    // 3. VNI/Combined: digit keys 1-9 for tone/modifier (only with pending composition)
-    if (IsVniDigitKey(vkCode) && engineHasComp) {
+    // 3. VNI/Combined/UserDefined: digit keys 0-9 for tone/modifier (only with pending composition)
+    if (IsEngineDigitKey(vkCode) && engineHasComp) {
         return true;
     }
 
@@ -346,9 +364,9 @@ bool EngineController::HandleKey(ITfContext* pContext, UINT vkCode) {
         return true;
     }
 
-    // 4. VNI/Combined: digit keys 1-9 → push to engine, update composition
-    if (IsVniDigitKey(vkCode) && engine_->Count() > 0) {
-        wchar_t ch = static_cast<wchar_t>(vkCode);  // VK '1'-'9' = 0x31-0x39 = L'1'-L'9'
+    // 4. VNI/Combined/UserDefined: digit keys 0-9 → push to engine, update composition
+    if (IsEngineDigitKey(vkCode) && engine_->Count() > 0) {
+        wchar_t ch = static_cast<wchar_t>(vkCode);  // VK '0'-'9' = 0x30-0x39 = L'0'-L'9'
         TSF_LOG(L"HandleKey: pushing VNI digit '%c'", ch);
         engine_->PushChar(ch);
 
@@ -384,6 +402,10 @@ void EngineController::ProcessBackspace(ITfContext* pContext) {
 void EngineController::Commit(ITfContext* pContext) {
     // VietType pattern: Get committed text, then request edit session, then reset engine.
     // This ensures TSF state and engine state are synchronized atomically.
+    //
+    // PeekRaw BEFORE engine_->Commit() — Commit() internally calls Reset() which
+    // clears escRawHistory_ (see TelexEngineTest.EscRestoreRaw_PeekRawClearedByCommit).
+    std::wstring rawSnapshot = engine_->PeekRaw();
     std::wstring committed = engine_->Commit();
 
     // Commit: set final text and end composition in one atomic operation
@@ -393,12 +415,19 @@ void EngineController::Commit(ITfContext* pContext) {
 
     // Reset engine state AFTER the edit session completes (synchronous)
     engine_->Reset();
+    digitLedWord_ = false;
 
     TSF_LOG(L"Commit called, text='%ls'", committed.c_str());
+
+    // Plain Commit (no trailing char) → no undo window. Caller is Enter/arrow/F-key.
+    RecordCommitSnapshot(std::move(committed), std::move(rawSnapshot), /*hasTrailingChar=*/false);
 }
 
 void EngineController::CommitWithChar(ITfContext* pContext, wchar_t appendChar) {
     // VietType pattern: Get committed text, then request edit session, then reset engine.
+    //
+    // PeekRaw BEFORE engine_->Commit() — see Commit() comment above.
+    std::wstring rawSnapshot = engine_->PeekRaw();
     std::wstring committed = engine_->Commit();
 
     // Append the commit character (e.g., space) if provided
@@ -413,13 +442,49 @@ void EngineController::CommitWithChar(ITfContext* pContext, wchar_t appendChar) 
 
     // Reset engine state AFTER the edit session completes (synchronous)
     engine_->Reset();
+    digitLedWord_ = false;
 
     TSF_LOG(L"CommitWithChar called, text='%ls'", committed.c_str());
+
+    // CommitWithChar always appends a trigger (space) — opens undo window.
+    // `committed` already includes the appended char (set above).
+    const bool hasTrailing = (appendChar != L'\0');
+    RecordCommitSnapshot(std::move(committed), std::move(rawSnapshot), hasTrailing);
+}
+
+bool EngineController::CommitRawAndEnd(ITfContext* pContext) {
+    std::wstring raw = engine_->PeekRaw();
+    if (raw.empty()) return false;
+
+    auto* pSession = new CommitEditSession(pContext, &compositionMgr_, raw);
+    RequestEditSession(pContext, pSession);
+    pSession->Release();
+
+    engine_->Reset();
+    digitLedWord_ = false;
+
+    TSF_LOG(L"CommitRawAndEnd: raw='%ls'", raw.c_str());
+    return true;
+}
+
+bool EngineController::HasNonEmptySelection(ITfContext* pContext) {
+    if (pContext == nullptr) return false;
+    bool hasSelection = false;
+    auto* pSession = new SelectionCheckEditSession(pContext, &hasSelection);
+    HRESULT hrSession = S_OK;
+    HRESULT hr = pContext->RequestEditSession(
+        clientId_, pSession, TF_ES_SYNC | TF_ES_READ, &hrSession);
+    pSession->Release();
+    if (FAILED(hr) || FAILED(hrSession)) {
+        return false;
+    }
+    return hasSelection;
 }
 
 void EngineController::Reset() {
     engine_->Reset();
     compositionMgr_.TerminateComposition();
+    digitLedWord_ = false;
 }
 
 void EngineController::DetectScintillaApp() {
@@ -447,36 +512,20 @@ void EngineController::DetectScintillaApp() {
 }
 
 bool EngineController::CheckConfigEvent() {
-    // Initialize event if not already done
-    if (!configEvent_.IsValid()) {
-        configEvent_.Initialize();
-    }
-
-    // Non-blocking check for signal
-    if (!configEvent_.Wait(0)) {
-        return false;  // No signal
-    }
-
-    // Config changed - read from SharedState
-    TSF_LOG(L"Config event received, checking SharedState");
-
     if (!sharedState_.IsConnected()) {
         // Try to open SharedState if not connected
         if (!sharedState_.OpenReadWrite()) {
-            TSF_LOG(L"CheckConfigEvent: SharedState not available");
             return false;
         }
     }
 
-    SharedState state = sharedState_.Read();
-    if (!state.IsValid()) {
-        TSF_LOG(L"CheckConfigEvent: SharedState invalid");
+    uint32_t currentEpoch = sharedState_.ReadEpoch();
+    if (currentEpoch == lastEpoch_) {
         return false;
     }
 
-    // Check if epoch changed (config actually updated)
-    if (state.epoch == lastEpoch_) {
-        TSF_LOG(L"CheckConfigEvent: epoch unchanged, skipping reload");
+    SharedState state = sharedState_.Read();
+    if (!state.IsValid()) {
         return false;
     }
 
@@ -522,6 +571,13 @@ void EngineController::RefreshFlags() {
     }
 }
 
+void EngineController::SetTsfTipActive(bool active) {
+    if (sharedState_.IsConnected()) {
+        sharedState_.SetOrClearFlag(SharedFlags::TSF_TIP_ACTIVE, active);
+        TSF_LOG(L"SetTsfTipActive: %s", active ? L"true" : L"false");
+    }
+}
+
 void EngineController::ApplySharedState(const SharedState& state) {
     // Update runtime flags
     engineEnabled_ = (state.flags & SharedFlags::ENGINE_ENABLED) != 0;
@@ -546,6 +602,13 @@ void EngineController::ApplySharedState(const SharedState& state) {
     config_.spellCheckEnabled = state.spellCheck != 0;
     config_.optimizeLevel = optimizeLevel;
     DecodeFeatureFlags(state.GetFeatureFlags(), config_);
+    // v3 cleanup: legacy `state.tempOffMethod` no longer decoded — TSF never
+    // consumed this field (V/E toggle path is in HookEngine/main app).
+
+    // Runtime file-logger gate. SettingsDialog persists the bit into the
+    // feature-flag bitmask via SharedState, so flipping the toggle in the
+    // EXE reaches every TSF DLL instance on the next CheckConfigEvent tick.
+    ::NextKey::Logger::SetEnabled(config_.debugLogEnabled);
 
     // Recreate engine with updated config (engine stores a copy of TypingConfig,
     // so we must recreate it whenever any config field changes)
@@ -565,6 +628,7 @@ void EngineController::ToggleVietnameseMode() {
     sharedState_.ToggleFlag(SharedFlags::VIETNAMESE_MODE);
     // Read back actual flag to stay in sync (avoids TOCTOU with EXE toggling)
     vietnameseMode_ = (sharedState_.ReadFlags() & SharedFlags::VIETNAMESE_MODE) != 0;
+    digitLedWord_ = false;  // V/E switch ends any in-progress word
     if (langBarButton_) {
         langBarButton_->Refresh();
     }
@@ -602,6 +666,81 @@ void EngineController::UninitLanguageBar() {
         langBarButton_->Release();
         langBarButton_ = nullptr;
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Commit-undo state machine (design 2026-05-17)
+// ═══════════════════════════════════════════════════════════
+
+void EngineController::RecordCommitSnapshot(std::wstring text,
+                                            std::wstring rawInput,
+                                            bool hasTrailingChar) noexcept {
+    if (text.empty() || rawInput.empty()) {
+        commitUndoState_ = CommitUndoState::Idle;
+        lastCommit_ = {};
+        return;
+    }
+    lastCommit_.text = std::move(text);
+    lastCommit_.rawInput = std::move(rawInput);
+    lastCommit_.hasTrailingChar = hasTrailingChar;
+    lastCommit_.timestamp = GetTickCount();
+    // Only CommitWithChar (trailing space) enters Ready. Plain Commit (Enter,
+    // arrow, F-key) means cursor moves elsewhere — no undo window.
+    commitUndoState_ = hasTrailingChar ? CommitUndoState::Ready : CommitUndoState::Idle;
+    TSF_LOG(L"RecordCommitSnapshot: state=%d text='%ls' raw='%ls'",
+            static_cast<int>(commitUndoState_), lastCommit_.text.c_str(), lastCommit_.rawInput.c_str());
+}
+
+bool EngineController::WithinUndoWindow() const noexcept {
+    if (commitUndoState_ == CommitUndoState::Idle) return false;
+    return (GetTickCount() - lastCommit_.timestamp) <= kCommitUndoTimeoutMs;
+}
+
+void EngineController::TransitionUndoReadyToPrimed() noexcept {
+    if (commitUndoState_ != CommitUndoState::Ready) return;
+    commitUndoState_ = CommitUndoState::Primed;
+    TSF_LOG(L"CommitUndo: Ready -> Primed");
+}
+
+void EngineController::ResetCommitUndo() noexcept {
+    if (commitUndoState_ == CommitUndoState::Idle) return;
+    TSF_LOG(L"CommitUndo: -> Idle (was state=%d)", static_cast<int>(commitUndoState_));
+    commitUndoState_ = CommitUndoState::Idle;
+    lastCommit_ = {};
+}
+
+void EngineController::OnNonRestoreKey() noexcept {
+    if (commitUndoState_ != CommitUndoState::Idle) ResetCommitUndo();
+}
+
+bool EngineController::TryRestoreLastCommitRaw(ITfContext* pContext) {
+    if (commitUndoState_ != CommitUndoState::Primed) return false;
+    if (!WithinUndoWindow()) {
+        TSF_LOG(L"TryRestoreLastCommitRaw: window expired (state=%d age=%ums)",
+                static_cast<int>(commitUndoState_),
+                GetTickCount() - lastCommit_.timestamp);
+        ResetCommitUndo();
+        return false;
+    }
+    if (lastCommit_.text.empty() || lastCommit_.rawInput.empty()) {
+        ResetCommitUndo();
+        return false;
+    }
+    // The Primed state means the user already deleted the trailing trigger (space).
+    // We replace just the committed body. RecordCommitSnapshot stored the full
+    // string including trailing char — strip it now.
+    std::wstring body = lastCommit_.text;
+    if (lastCommit_.hasTrailingChar && !body.empty()) {
+        body.pop_back();
+    }
+    auto* pSession = new EscRestoreLastCommitSession(pContext, body, lastCommit_.rawInput);
+    RequestEditSession(pContext, pSession);
+    pSession->Release();
+
+    // Reset state regardless of edit session outcome — session failure is logged
+    // inside DoEditSession; caller falls back to pass-through ESC.
+    ResetCommitUndo();
+    return true;
 }
 
 }  // namespace TSF

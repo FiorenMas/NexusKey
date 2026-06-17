@@ -1,5 +1,5 @@
-// NexusKey - Update Checker
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Update Checker
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Checks GitHub Releases API for new versions, downloads updates,
 // and shows TaskDialog UI for update notifications.
@@ -28,17 +28,17 @@ struct UpdateInfo {
 class UpdateChecker {
 public:
     static constexpr const wchar_t* API_URL =
-        L"https://api.github.com/repos/phatMT97/NextKey/releases/latest";
+        L"https://api.github.com/repos/phatMT97/VKey/releases/latest";
 
     /// Check GitHub Releases for a newer version (synchronous, use from background thread)
     [[nodiscard]] static UpdateInfo CheckForUpdate() noexcept;
 
     /// Download a file from URL to local path (synchronous)
-    [[nodiscard]] static bool DownloadFile(const std::wstring& url, const std::wstring& localPath) noexcept;
+    [[nodiscard]] static bool DownloadFile(const std::wstring& url, const std::wstring& localPath, std::atomic<bool>& cancelFlag) noexcept;
 
     /// Download ZIP, verify hash, launch installer (synchronous — call from background thread).
     /// Returns true if installer was launched. On failure, cleans up the downloaded file.
-    [[nodiscard]] static bool DownloadAndLaunchInstaller(const std::wstring& downloadUrl) noexcept;
+    [[nodiscard]] static bool DownloadAndLaunchInstaller(const std::wstring& downloadUrl, std::atomic<bool>& cancelFlag) noexcept;
 
     /// Parse version string (e.g. "v1.2.3-beta") into packed format (major<<16 | minor<<8 | patch)
     [[nodiscard]] static uint32_t ParseVersion(const std::wstring& versionStr) noexcept;

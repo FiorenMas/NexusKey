@@ -1,5 +1,5 @@
-// NexusKey - Localized String Dictionary Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Localized String Dictionary Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "Strings.h"
 #include <atomic>
@@ -21,17 +21,19 @@ static const wchar_t* const kVietnamese[] = {
     L"Bảng mã",                                      // MENU_CODE_TABLE
     L"Unicode tổ hợp",                               // MENU_UNICODE_COMPOUND
     L"Bảng điều khiển...",                            // MENU_SETTINGS
-    L"Giới thiệu NexusKey",                          // MENU_ABOUT
+    L"Giới thiệu VKey",                          // MENU_ABOUT
     L"Thoát",                                        // MENU_EXIT
-    L"NexusKey - Tiếng Việt",                        // TIP_VIETNAMESE
-    L"NexusKey - English",                            // TIP_ENGLISH
-    L"Giới thiệu NexusKey",                          // ABOUT_TITLE
-    L"NexusKey - Bộ gõ Tiếng Việt\n"                 // ABOUT_BODY
+    L"Tắt tự khởi động lại",                         // MENU_STOP_WATCHDOG
+    L"Bật tự khởi động lại",                         // MENU_ENABLE_WATCHDOG
+    L"VKey - Tiếng Việt",                        // TIP_VIETNAMESE
+    L"VKey - English",                            // TIP_ENGLISH
+    L"Giới thiệu VKey",                          // ABOUT_TITLE
+    L"VKey - Bộ gõ Tiếng Việt\n"                 // ABOUT_BODY
     L"Giải pháp gõ Tiếng Việt hiện đại cho Windows.\n\n"
-    L"SPDX-License-Identifier: GPL-3.0-only",
+    L"SPDX-License-Identifier: AGPL-3.0-only",
     L"Cập nhật",                                     // UPDATE_TITLE
     L"Có phiên bản mới!",                            // UPDATE_AVAILABLE_TITLE
-    L"Phiên bản mới %s đã sẵn sàng.",               // UPDATE_AVAILABLE_BODY
+    L"Phiên bản mới %s đã sẵn sàng.\n\nỨng dụng sẽ tự động đóng, cập nhật và khởi động lại.", // UPDATE_AVAILABLE_BODY
     L"Cập nhật ngay",                                // UPDATE_NOW
     L"Bỏ qua",                                      // UPDATE_SKIP
     L"Bạn đang dùng phiên bản mới nhất!",           // UPDATE_LATEST
@@ -47,7 +49,7 @@ static const wchar_t* const kVietnamese[] = {
     L"Một vài ứng dụng đang chạy phiên bản cũ. Khởi động lại Windows để đồng bộ.",  // UPDATE_BANNER_MISMATCH
     L"Khởi động lại ngay",                           // UPDATE_BANNER_RESTART_NOW
     L"Để sau",                                       // UPDATE_BANNER_LATER
-    L"Khởi động lại Windows ngay để hoàn tất cập nhật NexusKey?", // UPDATE_BANNER_CONFIRM
+    L"Khởi động lại Windows ngay để hoàn tất cập nhật VKey?", // UPDATE_BANNER_CONFIRM
     L"Chưa chọn file nguồn.",                       // CONVERT_NO_SOURCE_FILE
     L"Không thể đọc file nguồn.",                    // CONVERT_READ_ERROR
     L"Clipboard trống.",                             // CONVERT_CLIPBOARD_EMPTY
@@ -61,12 +63,15 @@ static const wchar_t* const kVietnamese[] = {
     L"Cần khởi động lại các ứng dụng đang mở để thay đổi có hiệu lực.",
     L"Không thể gỡ đăng ký TSF.\n"                   // TSF_UNREGISTER_FAILED
     L"Vui lòng chạy với quyền Administrator.",
-    L"Không thể thêm NexusKey vào danh sách loại trừ.",  // EXCLUDED_CANNOT_SELF
+    L"Không thể thêm VKey vào danh sách loại trừ.",  // EXCLUDED_CANNOT_SELF
     L"Bạn có muốn giữ lại danh sách hiện tại không?",    // IMPORT_KEEP_EXISTING
     L"Không thể mở file để nạp dữ liệu.",                // IMPORT_FILE_OPEN_FAILED
     L"Không thể ghi file để xuất dữ liệu.",              // EXPORT_FILE_WRITE_FAILED
     L"Không thể tự khởi động lại để bỏ quyền Admin.\n"   // ADMIN_DEELEVATION_FAILED
-    L"Vui lòng thoát và khởi động lại NexusKey thủ công.",
+    L"Vui lòng thoát và khởi động lại VKey thủ công.",
+    L"Đã tắt tự khởi động lại. VKey sẽ không tự bật lại nếu thoát đột ngột.", // WATCHDOG_STOPPED_BODY
+    L"Đã bật tự khởi động lại. VKey sẽ tự bật lại nếu thoát đột ngột.", // WATCHDOG_ENABLED_BODY
+    L"Cấu hình hiện tại đã được sao lưu thành công tại:\n%s\n\nỨng dụng sẽ tự động đóng để tiến hành cập nhật.", // UPDATE_BACKUP_SUCCESS
 };
 
 // English string table
@@ -82,17 +87,19 @@ static const wchar_t* const kEnglish[] = {
     L"Code table",                                    // MENU_CODE_TABLE
     L"Unicode Compound",                              // MENU_UNICODE_COMPOUND
     L"Settings...",                                   // MENU_SETTINGS
-    L"About NexusKey",                                // MENU_ABOUT
+    L"About VKey",                                // MENU_ABOUT
     L"Exit",                                          // MENU_EXIT
-    L"NexusKey - Vietnamese",                         // TIP_VIETNAMESE
-    L"NexusKey - English",                            // TIP_ENGLISH
-    L"About NexusKey",                                // ABOUT_TITLE
-    L"NexusKey Vietnamese Input\n"                    // ABOUT_BODY
+    L"Stop auto-restart",                             // MENU_STOP_WATCHDOG
+    L"Enable auto-restart",                           // MENU_ENABLE_WATCHDOG
+    L"VKey - Vietnamese",                         // TIP_VIETNAMESE
+    L"VKey - English",                            // TIP_ENGLISH
+    L"About VKey",                                // ABOUT_TITLE
+    L"VKey Vietnamese Input\n"                    // ABOUT_BODY
     L"A modern Vietnamese typing solution for Windows.\n\n"
-    L"SPDX-License-Identifier: GPL-3.0-only",
+    L"SPDX-License-Identifier: AGPL-3.0-only",
     L"Update",                                       // UPDATE_TITLE
     L"Update available!",                            // UPDATE_AVAILABLE_TITLE
-    L"Version %s is available.",                     // UPDATE_AVAILABLE_BODY
+    L"Version %s is available.\n\nThe application will automatically close, update, and restart.", // UPDATE_AVAILABLE_BODY
     L"Update now",                                   // UPDATE_NOW
     L"Skip",                                         // UPDATE_SKIP
     L"You're on the latest version!",                // UPDATE_LATEST
@@ -108,7 +115,7 @@ static const wchar_t* const kEnglish[] = {
     L"Some apps still run the old version. Restart Windows to sync.",      // UPDATE_BANNER_MISMATCH
     L"Restart now",                                  // UPDATE_BANNER_RESTART_NOW
     L"Later",                                        // UPDATE_BANNER_LATER
-    L"Restart Windows now to finish the NexusKey update?", // UPDATE_BANNER_CONFIRM
+    L"Restart Windows now to finish the VKey update?", // UPDATE_BANNER_CONFIRM
     L"No source file selected.",                     // CONVERT_NO_SOURCE_FILE
     L"Cannot read source file.",                     // CONVERT_READ_ERROR
     L"Clipboard is empty.",                          // CONVERT_CLIPBOARD_EMPTY
@@ -122,12 +129,15 @@ static const wchar_t* const kEnglish[] = {
     L"Please restart open applications for changes to take effect.",
     L"Unable to unregister TSF.\n"                   // TSF_UNREGISTER_FAILED
     L"Please run as Administrator.",
-    L"Cannot add NexusKey to the exclusion list.",   // EXCLUDED_CANNOT_SELF
+    L"Cannot add VKey to the exclusion list.",   // EXCLUDED_CANNOT_SELF
     L"Keep the existing list?",                      // IMPORT_KEEP_EXISTING
     L"Could not open file for import.",              // IMPORT_FILE_OPEN_FAILED
     L"Could not write file for export.",             // EXPORT_FILE_WRITE_FAILED
     L"Could not auto-restart to drop admin rights.\n"  // ADMIN_DEELEVATION_FAILED
-    L"Please exit and relaunch NexusKey manually.",
+    L"Please exit and relaunch VKey manually.",
+    L"Auto-restart stopped. VKey will not relaunch on crash.", // WATCHDOG_STOPPED_BODY
+    L"Auto-restart enabled. VKey will relaunch on crash.", // WATCHDOG_ENABLED_BODY
+    L"Your current configuration has been backed up at:\n%s\n\nThe application will automatically close to perform the update.", // UPDATE_BACKUP_SUCCESS
 };
 
 static_assert(sizeof(kVietnamese) / sizeof(kVietnamese[0]) == static_cast<size_t>(StringId::_COUNT),

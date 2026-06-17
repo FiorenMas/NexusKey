@@ -1,5 +1,5 @@
-// NexusKey - Convert Tool Dialog Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Convert Tool Dialog Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -31,7 +31,6 @@ private:
     void saveConvertConfig();
     void setToggleUI(const char* toggleId, const char* hiddenId, bool value);
     void setDropdownUI(const char* id, int value);
-    void setHotkeyCharUI(const std::wstring& keyStr);
 
     ConvertConfig config_;
 };

@@ -1,7 +1,8 @@
-// NexusKey - Update Security Helpers Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Update Security Helpers Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "UpdateSecurity.h"
+#include "CancelableBindStatusCallback.h"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -206,11 +207,17 @@ std::string ComputeFileSha256(const std::wstring& filePath) noexcept {
     }
 }
 
+// CancelableBindStatusCallback lives in CancelableBindStatusCallback.h
+// (shared with UpdateChecker.cpp).
+
 bool VerifyDownloadedZip(
     const std::wstring& zipUrl,
-    const std::wstring& localZipPath) noexcept
+    const std::wstring& localZipPath,
+    std::atomic<bool>& cancelFlag) noexcept
 {
     try {
+        if (cancelFlag.load(std::memory_order_relaxed)) return false;
+
         // Defense-in-depth: reject non-GitHub URLs even if caller forgot to validate
         if (!IsAllowedDownloadUrl(zipUrl)) return false;
 
@@ -220,10 +227,11 @@ bool VerifyDownloadedZip(
         // 2. Download checksum file to temp location
         wchar_t tempDir[MAX_PATH] = {};
         GetTempPathW(MAX_PATH, tempDir);
-        std::wstring checksumPath = std::wstring(tempDir) + L"nexuskey_checksum.sha256";
+        std::wstring checksumPath = std::wstring(tempDir) + L"vkey_checksum.sha256";
 
+        CancelableBindStatusCallback callback(cancelFlag);
         HRESULT hr = URLDownloadToFileW(nullptr, checksumUrl.c_str(),
-            checksumPath.c_str(), 0, nullptr);
+            checksumPath.c_str(), 0, &callback);
         if (FAILED(hr)) {
             DeleteFileW(checksumPath.c_str());
             return false;

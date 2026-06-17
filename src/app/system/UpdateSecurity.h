@@ -1,5 +1,5 @@
-// NexusKey - Update Security Helpers
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Update Security Helpers
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Security hardening for the self-update system:
 // - SHA-256 hash verification of downloaded files (SEC-001)
@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <atomic>
 
 namespace NextKey {
 
@@ -57,7 +58,8 @@ namespace NextKey {
 /// On any failure (download, parse, hash mismatch) returns false.
 [[nodiscard]] bool VerifyDownloadedZip(
     const std::wstring& zipUrl,
-    const std::wstring& localZipPath) noexcept;
+    const std::wstring& localZipPath,
+    std::atomic<bool>& cancelFlag) noexcept;
 
 #endif  // _WIN32
 

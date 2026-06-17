@@ -1,5 +1,5 @@
-// NexusKey - DPI & Resolution Scale Helper
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - DPI & Resolution Scale Helper
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Utility for scaling dialog sizes based on DPI and screen resolution.
 // Ensures UI looks correct across different monitors and DPI settings.
@@ -47,6 +47,24 @@ public:
         int dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
         ReleaseDC(nullptr, hdc);
         return static_cast<double>(dpiX) / DEFAULT_DPI;
+    }
+
+    /**
+     * Get per-window DPI scale factor. Uses GetDpiForWindow (Win10 1607+)
+     * which returns the correct DPI for the monitor the HWND is currently on.
+     * Critical for multi-monitor setups where monitors have different DPI.
+     * Falls back to getDpiScale() (system DPI) when hwnd is null or on older Windows.
+     */
+    [[nodiscard]] static double getDpiScaleForWindow(HWND hwnd) noexcept {
+        if (hwnd) {
+            static auto pfn = reinterpret_cast<UINT(WINAPI*)(HWND)>(
+                GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+            if (pfn) {
+                UINT dpi = pfn(hwnd);
+                if (dpi > 0) return static_cast<double>(dpi) / DEFAULT_DPI;
+            }
+        }
+        return getDpiScale();
     }
 
     /**

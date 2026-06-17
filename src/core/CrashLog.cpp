@@ -1,5 +1,5 @@
-// NexusKey - Always-on crash exception logger
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Always-on crash exception logger
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "CrashLog.h"
 
@@ -27,7 +27,7 @@ HANDLE OpenLogFile() noexcept {
 
     *(lastSep + 1) = L'\0';
     wchar_t logPath[MAX_PATH] = {};
-    if (swprintf_s(logPath, L"%ls_nexuskey_crash.log", exePath) < 0) {
+    if (swprintf_s(logPath, L"%ls_vkey_crash.log", exePath) < 0) {
         return INVALID_HANDLE_VALUE;
     }
 

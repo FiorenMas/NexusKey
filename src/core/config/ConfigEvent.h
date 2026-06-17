@@ -1,5 +1,5 @@
-// NexusKey - Config Event Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Config Event Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

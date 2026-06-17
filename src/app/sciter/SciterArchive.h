@@ -1,5 +1,5 @@
-// NexusKey - Sciter Archive Resource Binding
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Sciter Archive Resource Binding
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

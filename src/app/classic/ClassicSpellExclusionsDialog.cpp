@@ -1,5 +1,5 @@
-// NexusKey Classic — Spell Check Exclusions Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Spell Check Exclusions Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicSpellExclusionsDialog.h"
 #include "core/config/ConfigManager.h"
@@ -18,6 +18,8 @@ enum {
     IDC_SPELL_EDIT,
     IDC_SPELL_BTN_ADD,
     IDC_SPELL_BTN_DELETE,
+    IDC_SPELL_BTN_IMPORT,
+    IDC_SPELL_BTN_EXPORT,
 };
 
 // ════════════════════════════════════════════════════════════
@@ -72,8 +74,8 @@ bool ClassicSpellExclusionsDialog::Init(HINSTANCE hInstance, HWND parent, bool f
     RECT rc = {0, 0, w, h};
     AdjustWindowRectEx(&rc, style, FALSE, WS_EX_TOPMOST);
     int aw = rc.right - rc.left, ah = rc.bottom - rc.top;
-    int sx = GetSystemMetrics(SM_CXSCREEN), sy = GetSystemMetrics(SM_CYSCREEN);
-    SetWindowPos(hwnd_, nullptr, (sx - aw) / 2, (sy - ah) / 2, aw, ah, SWP_NOZORDER);
+    POINT pt = NextKey::GetCenteredPos(hwnd_, aw, ah);
+    SetWindowPos(hwnd_, nullptr, pt.x, pt.y, aw, ah, SWP_NOZORDER);
 
     theme_.Init(hwnd_, forceLightTheme);
     theme_.ApplyWindowAttributes(hwnd_);
@@ -139,6 +141,17 @@ void ClassicSpellExclusionsDialog::CreateControls() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         x, y, Dpi(80), btnH,
         hwnd_, reinterpret_cast<HMENU>(IDC_SPELL_BTN_DELETE), hInstance_, nullptr);
+
+    int btnW2 = Dpi(75);
+    btnImport_ = CreateWindowExW(0, L"BUTTON", L"Nhập",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        x + cw - btnW2 * 2 - gap, y, btnW2, btnH,
+        hwnd_, reinterpret_cast<HMENU>(IDC_SPELL_BTN_IMPORT), hInstance_, nullptr);
+
+    btnExport_ = CreateWindowExW(0, L"BUTTON", L"Xuất",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        x + cw - btnW2, y, btnW2, btnH,
+        hwnd_, reinterpret_cast<HMENU>(IDC_SPELL_BTN_EXPORT), hInstance_, nullptr);
 }
 
 void ClassicSpellExclusionsDialog::PopulateList() {
@@ -188,6 +201,84 @@ void ClassicSpellExclusionsDialog::DeleteSelected() {
     entries_.erase(entries_.begin() + sel);
     PopulateList();
     SaveData();
+}
+
+void ClassicSpellExclusionsDialog::ImportFromFile() {
+    std::wstring path = OpenFileDialog(hwnd_, L"Text Files (*.txt)\0*.txt\0All Files\0*.*\0", L"Nhập danh sách loại trừ");
+    if (path.empty()) return;
+
+    // Ask replace or append
+    int choice = MessageBoxW(hwnd_,
+        L"Thay thế danh sách hiện tại hay thêm vào?",
+        L"Nhập file",
+        MB_YESNOCANCEL | MB_ICONQUESTION);
+    if (choice == IDCANCEL) return;
+
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        MessageBoxW(hwnd_, L"Không thể mở file.", L"Lỗi", MB_ICONERROR);
+        return;
+    }
+
+    if (choice == IDYES) entries_.clear();  // Replace
+
+    int added = 0;
+    ParseConfigLines(file, [&](const std::string& line) {
+        std::wstring wline = Utf8ToWide(line);
+
+        // Trim + min-length validate (entries < 2 chars are noise).
+        size_t s = 0, e = wline.size();
+        while (s < e && wline[s] == L' ') ++s;
+        while (e > s && wline[e - 1] == L' ') --e;
+        if (e - s < 2) return;
+
+        std::wstring entry = wline.substr(s, e - s);
+        for (auto& ch : entry) ch = towlower(ch);
+
+        bool exists = false;
+        for (const auto& existing : entries_) {
+            if (existing == entry) { exists = true; break; }
+        }
+        if (!exists) {
+            entries_.push_back(entry);
+            added++;
+        }
+    });
+
+    std::sort(entries_.begin(), entries_.end());
+    PopulateList();
+    if (added > 0 || choice == IDYES) SaveData();
+
+    MessageBoxW(hwnd_,
+        (L"Đã nhập " + std::to_wstring(added) + L" từ mới.").c_str(),
+        L"Kết quả", MB_OK);
+}
+
+void ClassicSpellExclusionsDialog::ExportToFile() {
+    if (entries_.empty()) {
+        MessageBoxW(hwnd_, L"Danh sách trống.", L"Thông báo", MB_ICONINFORMATION);
+        return;
+    }
+
+    std::wstring path = SaveFileDialog(hwnd_, L"Text Files (*.txt)\0*.txt\0", L"Xuất danh sách loại trừ", L"txt");
+    if (path.empty()) return;
+
+    std::ofstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        MessageBoxW(hwnd_, L"Không thể tạo file.", L"Lỗi", MB_ICONERROR);
+        return;
+    }
+
+    // Write UTF-8 BOM
+    file.write("\xEF\xBB\xBF", 3);
+
+    for (const auto& entry : entries_) {
+        std::string utf8 = WideToUtf8(entry);
+        file.write(utf8.c_str(), utf8.size());
+        file.write("\r\n", 2);
+    }
+
+    MessageBoxW(hwnd_, L"Đã xuất danh sách thành công.", L"Thành công", MB_OK);
 }
 
 // ════════════════════════════════════════════════════════════
@@ -252,6 +343,12 @@ LRESULT CALLBACK ClassicSpellExclusionsDialog::WndProc(HWND hwnd, UINT msg, WPAR
                 }
                 case IDC_SPELL_BTN_DELETE:
                     self->DeleteSelected();
+                    return 0;
+                case IDC_SPELL_BTN_IMPORT:
+                    self->ImportFromFile();
+                    return 0;
+                case IDC_SPELL_BTN_EXPORT:
+                    self->ExportToFile();
                     return 0;
             }
             break;

@@ -1,5 +1,5 @@
-// NexusKey - Window Picker Base Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Window Picker Base Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "WindowPickerDialog.h"
 #include "helpers/AppHelpers.h"
@@ -27,7 +27,7 @@ std::vector<std::wstring> WindowPickerDialog::getRunningApps() {
                 name == L"smss.exe" || name == L"wininit.exe" ||
                 name == L"services.exe" || name == L"lsass.exe" ||
                 name == L"conhost.exe" || name == L"dwm.exe" ||
-                name == L"nexuskey.exe" || name == L"[system process]") {
+                name == L"vkey.exe" || name == L"[system process]") {
                 continue;
             }
             if (seen.insert(name).second) {

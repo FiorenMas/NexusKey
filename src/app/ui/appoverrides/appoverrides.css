@@ -112,15 +112,20 @@
 .list-col-name {
     flex: 1;
     min-width: 0;
-    max-width: 100px;
+    max-width: 80px;
 }
 
 .list-col-inputmethod {
-    width: 80px;
+    width: 60px;
     text-align: center;
 }
 
 .list-col-encoding {
+    width: 60px;
+    text-align: center;
+}
+
+.list-col-sendmethod {
     width: 65px;
     text-align: center;
 }
@@ -156,7 +161,7 @@
 .app-item-name {
     flex: 1;
     min-width: 0;
-    max-width: 100px;
+    max-width: 80px;
     font-size: 12px;
     font-weight: 500;
     color: var(--text-primary);
@@ -167,13 +172,20 @@
 }
 
 .app-item-inputmethod {
-    width: 80px;
+    width: 60px;
     font-size: 11px;
     text-align: center;
     color: var(--text-secondary);
 }
 
 .app-item-encoding {
+    width: 60px;
+    font-size: 11px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.app-item-sendmethod {
     width: 65px;
     font-size: 11px;
     text-align: center;

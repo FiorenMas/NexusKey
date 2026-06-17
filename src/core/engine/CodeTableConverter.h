@@ -1,7 +1,7 @@
-// NexusKey - Code Table Converter
+// VKey - Code Table Converter
 // Copyright (c) 2024-2026 PhatMT. All rights reserved.
-// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-NexusKey-Commercial
-// Dual-licensed: GPL-3.0 for open-source use, commercial license for proprietary use.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-VKey-Commercial
+// Dual-licensed: AGPL-3.0 for open-source use, commercial license for proprietary use.
 // See LICENSE and LICENSE-COMMERCIAL in the project root.
 //
 // Converts Unicode Vietnamese characters to legacy encodings
@@ -45,11 +45,11 @@ namespace CodeTableConverter {
 /// Vietnamese-aware lowercase conversion.
 [[nodiscard]] std::wstring ToLower(const std::wstring& input) noexcept;
 
-/// Capitalize first letter of each sentence (after .!?\n).
-[[nodiscard]] std::wstring CapitalizeFirstOfSentence(const std::wstring& input) noexcept;
+/// Capitalize first letter of each sentence (after .!?\n), lowercasing the rest.
+[[nodiscard]] std::wstring ToSentenceCase(const std::wstring& input) noexcept;
 
-/// Capitalize first letter of each word.
-[[nodiscard]] std::wstring CapitalizeEachWord(const std::wstring& input) noexcept;
+/// Capitalize first letter of each word, lowercasing the rest.
+[[nodiscard]] std::wstring ToTitleCase(const std::wstring& input) noexcept;
 
 }  // namespace CodeTableConverter
 

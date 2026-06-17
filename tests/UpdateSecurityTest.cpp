@@ -1,5 +1,5 @@
-// NexusKey - UpdateSecurity Unit Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - UpdateSecurity Unit Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "app/system/UpdateSecurity.h"
@@ -39,7 +39,7 @@ TEST(EscapePowerShellSingleQuoteTest, ConsecutiveQuotes) {
 
 TEST(IsAllowedDownloadUrlWideTest, GitHubReleasesUrl) {
     EXPECT_TRUE(IsAllowedDownloadUrl(
-        L"https://github.com/phatMT97/NextKey/releases/download/v2.0.0/NexusKey-x64.zip"));
+        L"https://github.com/phatMT97/VKey/releases/download/v2.0.0/VKey-x64.zip"));
 }
 
 TEST(IsAllowedDownloadUrlWideTest, GitHubObjectsUrl) {
@@ -49,11 +49,11 @@ TEST(IsAllowedDownloadUrlWideTest, GitHubObjectsUrl) {
 
 TEST(IsAllowedDownloadUrlWideTest, GitHubCodeloadUrl) {
     EXPECT_TRUE(IsAllowedDownloadUrl(
-        L"https://codeload.github.com/phatMT97/NextKey/zip/refs/tags/v2.0.0"));
+        L"https://codeload.github.com/phatMT97/VKey/zip/refs/tags/v2.0.0"));
 }
 
 TEST(IsAllowedDownloadUrlWideTest, RejectsArbitraryDomain) {
-    EXPECT_FALSE(IsAllowedDownloadUrl(L"https://evil.com/NexusKey-x64.zip"));
+    EXPECT_FALSE(IsAllowedDownloadUrl(L"https://evil.com/VKey-x64.zip"));
 }
 
 TEST(IsAllowedDownloadUrlWideTest, RejectsHttp) {
@@ -70,18 +70,18 @@ TEST(IsAllowedDownloadUrlWideTest, RejectsEmpty) {
 
 TEST(IsAllowedDownloadUrlWideTest, CaseInsensitive) {
     EXPECT_TRUE(IsAllowedDownloadUrl(
-        L"HTTPS://GITHUB.COM/phatMT97/NextKey/releases/download/v2.0.0/NexusKey-x64.zip"));
+        L"HTTPS://GITHUB.COM/phatMT97/VKey/releases/download/v2.0.0/VKey-x64.zip"));
 }
 
 // ── SEC-003: URL domain validation (narrow) ────────────────────────────────
 
 TEST(IsAllowedDownloadUrlNarrowTest, GitHubReleasesUrl) {
     EXPECT_TRUE(IsAllowedDownloadUrl(
-        std::string("https://github.com/phatMT97/NextKey/releases/download/v2.0.0/NexusKey-x64.zip")));
+        std::string("https://github.com/phatMT97/VKey/releases/download/v2.0.0/VKey-x64.zip")));
 }
 
 TEST(IsAllowedDownloadUrlNarrowTest, RejectsArbitraryDomain) {
-    EXPECT_FALSE(IsAllowedDownloadUrl(std::string("https://evil.com/NexusKey-x64.zip")));
+    EXPECT_FALSE(IsAllowedDownloadUrl(std::string("https://evil.com/VKey-x64.zip")));
 }
 
 TEST(IsAllowedDownloadUrlNarrowTest, RejectsSubdomain) {
@@ -90,7 +90,7 @@ TEST(IsAllowedDownloadUrlNarrowTest, RejectsSubdomain) {
 
 TEST(IsAllowedDownloadUrlNarrowTest, CaseInsensitive) {
     EXPECT_TRUE(IsAllowedDownloadUrl(
-        std::string("HTTPS://GITHUB.COM/phatMT97/NextKey/releases/download/v2.0.0/NexusKey-x64.zip")));
+        std::string("HTTPS://GITHUB.COM/phatMT97/VKey/releases/download/v2.0.0/VKey-x64.zip")));
 }
 
 // ── SEC-001: ParseSha256File (cross-platform string parsing) ─────────────

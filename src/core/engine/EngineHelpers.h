@@ -1,7 +1,7 @@
-// NexusKey - Shared Engine Helper Functions
+// VKey - Shared Engine Helper Functions
 // Copyright (c) 2024-2026 PhatMT. All rights reserved.
-// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-NexusKey-Commercial
-// Dual-licensed: GPL-3.0 for open-source use, commercial license for proprietary use.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-VKey-Commercial
+// Dual-licensed: AGPL-3.0 for open-source use, commercial license for proprietary use.
 // See LICENSE and LICENSE-COMMERCIAL in the project root.
 //
 // Template helpers used by TypingEngine (Telex, VNI, and Combined input methods).
@@ -9,7 +9,8 @@
 
 #pragma once
 
-#include "SpellChecker.h"
+#include "PhonotacticsValidator.h"
+#include "Phonotactics.h"
 #include "EnglishProtection.h"
 #include "VietnameseTables.h"
 #include "core/config/TypingConfig.h"
@@ -113,8 +114,8 @@ inline void UpdateSpellCheck(const CharStateT* states, size_t count,
         spellCheckDisabled = false;
         return;
     }
-    auto result = SpellCheck::Validate(states, count, config.allowZwjf);
-    spellCheckDisabled = (result == SpellCheck::Result::Invalid);
+    auto result = Phonology::ValidateSyllableState(states, count, config.allowZwjf);
+    spellCheckDisabled = (result == Phonology::SyllableState::Invalid);
 }
 
 /// Check if auto-restore should return raw input instead of composed text.
@@ -269,6 +270,43 @@ template<typename CharStateT>
         ++codaLen;
     }
     return codaLen >= 1;
+}
+
+/// Combined pre-check: should a stroke-D attempt mark the buffer as HardEnglish?
+/// Caller has already verified dTarget != SIZE_MAX and states[dTarget].mod == None.
+///   - Coda-block heuristic catches "drop"+d (invalid coda 'p').
+///   - V+C+V structural pattern catches "detail"+d (e-t-a) which the
+///     coda-block heuristic misses due to its "leading-d + vowel coda"
+///     exception (kept so legitimate "doc"+d → "đoc" still works).
+template<typename CharStateT>
+[[nodiscard]] inline bool ShouldBlockStrokeDAsEnglish(
+        const CharStateT* states, size_t count, size_t dTarget) noexcept {
+    if (IsStrokeDBlockedByCoda(states, count, dTarget)) return true;
+    if (dTarget == 0 && HasStructuralVCVPattern(states, count)) return true;
+    return false;
+}
+
+/// Decide whether a stroke-D escape (Đ → d) should fire at the given target.
+/// Two allowed cases:
+///   (a) Trailing Đ (ddd → dd, vddd → vdd): user double-tapped to undo.
+///   (b) Leading Đ at index 0 with a vowel between it and the new d
+///       (ddocd → docd): Vietnamese never has coda 'd', so trailing d after
+///       a Đ-headed syllable is a recovery signal for mis-typed dd at start.
+///       Vowel guard preserves abbreviation chains: ddxd → đxd keeps Đ
+///       because no vowel sits between it and the trailing d.
+/// Intermediate Đ (e.g. HĐL+d for HĐLĐ, vđx+d) returns false — Đ belongs to
+/// a prior committed segment; the new d is a fresh literal so the NEXT dd
+/// can compose a new Đ.
+template<typename CharStateT>
+[[nodiscard]] inline bool IsStrokeDEscapeAllowed(
+        const CharStateT* states, size_t count, size_t dIdx) noexcept {
+    if (count > 0 && dIdx == count - 1) return true;
+    if (dIdx == 0 && count >= 2) {
+        for (size_t i = 1; i < count; ++i) {
+            if (states[i].IsVowel()) return true;
+        }
+    }
+    return false;
 }
 
 /// Does a composed buffer match any spell exclusion prefix?
@@ -482,103 +520,6 @@ template<typename CharStateT>
         if (!states[i].IsVowel()) return true;
     }
     return false;
-}
-
-/// Shared FindToneTarget algorithm — returns the index of the vowel that should
-/// receive the tone mark, using priority: P1 horn > P2 modified > P3 diphthong > P4 rightmost.
-/// Returns SIZE_MAX if no vowel found.
-template<typename CharStateT>
-[[nodiscard]] inline size_t FindToneTargetImpl(
-        const CharStateT* states, size_t count,
-        const uint8_t table[6][6], bool checkTriphthongs) noexcept {
-    size_t lastHornIdx = SIZE_MAX;
-    size_t firstModifiedIdx = SIZE_MAX;
-    size_t v3rd = SIZE_MAX;
-    size_t v2nd = SIZE_MAX;
-    size_t vLast = SIZE_MAX;
-    size_t vowelCount = 0;
-
-    for (size_t i = 0; i < count; ++i) {
-        if (!states[i].IsVowel()) continue;
-        if (IsClusterConsonant(states, count, i)) continue;
-
-        v3rd = v2nd;
-        v2nd = vLast;
-        vLast = i;
-        ++vowelCount;
-
-        if (states[i].IsHorn()) lastHornIdx = i;
-        if (firstModifiedIdx == SIZE_MAX && states[i].HasModifier())
-            firstModifiedIdx = i;
-    }
-
-    if (vowelCount == 0) return SIZE_MAX;
-
-    // Priority 1: Horn vowels (last one for ươ)
-    if (lastHornIdx != SIZE_MAX) return lastHornIdx;
-
-    // Priority 2: Other modified vowels (â, ê, ô, ă)
-    if (firstModifiedIdx != SIZE_MAX) return firstModifiedIdx;
-
-    // Priority 3: Diphthong/triphthong rules
-    if (vowelCount >= 2 && vLast == v2nd + 1) {
-        // Triphthongs (Modern only): tone on MIDDLE vowel
-        if (checkTriphthongs && vowelCount >= 3 && v3rd != SIZE_MAX &&
-            v2nd == v3rd + 1 && vLast == v2nd + 1) {
-            if (IsTriphthong(states[v3rd].base, states[v2nd].base, states[vLast].base))
-                return v2nd;
-        }
-
-        // Default: diphthong on last two vowels.
-        size_t firstIdx = v2nd;
-        size_t secondIdx = vLast;
-        int fi = DiphthongVowelIndex(states[v2nd].base);
-        int li = DiphthongVowelIndex(states[vLast].base);
-        bool shifted3Vowel = false;
-
-        // For 3+ contiguous vowels that are NOT a recognized triphthong
-        // (typo: e.g., gạo + extra 'i' → "gaoi"), prefer the FIRST two
-        // vowels of the cluster so the tone stays on the original diphthong
-        // instead of sliding onto the typo vowel. Only applies when the
-        // first pair has a valid rule; otherwise fall back to the last pair
-        // (preserves "uoi"→"uói"-style raw triphthongs without circumflex).
-        if (vowelCount >= 3 && v3rd != SIZE_MAX &&
-            v2nd == v3rd + 1 && vLast == v2nd + 1) {
-            int fiShift = DiphthongVowelIndex(states[v3rd].base);
-            // liShift = DiphthongVowelIndex(states[v2nd]) — already computed as fi.
-            if (fiShift >= 0 && fi >= 0 && table[fiShift][fi] != 0) {
-                li = fi;
-                fi = fiShift;
-                firstIdx = v3rd;
-                secondIdx = v2nd;
-                shifted3Vowel = true;
-            }
-        }
-
-        if (fi >= 0 && li >= 0) {
-            uint8_t rule = table[fi][li];
-
-            // Rule 3: Rising diphthongs (oa, oe) - SECOND with coda, FIRST without
-            if (rule == 3) {
-                // Shifted 3-vowel case with the "coda" being a REPEAT of the
-                // second vowel (e.g., "hoaa" = o,a,a from "hòa"+extra 'a') is a
-                // typo, not a real triphthong — tone must stay on the original
-                // first vowel (FIRST). For non-repeat vLast (e.g., "oai"→hoài),
-                // keep the standard coda check: vowel after secondIdx = SECOND.
-                if (shifted3Vowel && states[vLast].base == states[v2nd].base) {
-                    rule = 1;
-                } else {
-                    rule = (secondIdx + 1 < count) ? 2 : 1;
-                }
-            }
-
-            if (rule == 1) return firstIdx;    // tone on FIRST
-            if (rule == 2) return secondIdx;   // tone on SECOND
-        }
-    }
-
-    // Default: rightmost vowel
-    return vLast;
 }
 
 /// P4 guard for tone relocation: returns true if the target vowel was selected

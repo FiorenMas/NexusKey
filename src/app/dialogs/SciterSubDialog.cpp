@@ -1,8 +1,9 @@
-// NexusKey - Sciter SubDialog Base Class Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Sciter SubDialog Base Class Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SciterSubDialog.h"
 #include "../resource.h"
+#include "helpers/AppHelpers.h"
 #include "sciter/ScaleHelper.h"
 #include "sciter/SciterHelper.h"
 #include "system/DarkModeHelper.h"
@@ -157,10 +158,10 @@ SciterSubDialog::SciterSubDialog(const SubDialogConfig& config)
         // which the computed center point alone wouldn't capture.
         monitor = MonitorFromWindow(config_.parentHwnd, MONITOR_DEFAULTTONEAREST);
     } else {
-        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-        posX = (screenWidth - winWidth) / 2;
-        posY = (screenHeight - winHeight) / 2;
+        // No parent — center on primary monitor's work area (honors taskbar).
+        POINT pt = NextKey::GetCenteredPos(nullptr, winWidth, winHeight);
+        posX = pt.x;
+        posY = pt.y;
         POINT center{posX + winWidth / 2, posY + winHeight / 2};
         monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
     }

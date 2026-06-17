@@ -1,5 +1,5 @@
-// NexusKey - Macro Phrase-Prefix Matcher
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Macro Phrase-Prefix Matcher
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Pure, platform-free helper used by HookEngine to decide whether a
 // space-terminated word boundary should preserve the macro buffer (because it

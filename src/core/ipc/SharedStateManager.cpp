@@ -1,5 +1,5 @@
-// NexusKey - SharedStateManager Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - SharedStateManager Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SharedStateManager.h"
 
@@ -11,7 +11,7 @@
 
 namespace NextKey {
 
-static constexpr const wchar_t* SHARED_MEM_NAME = L"Local\\NexusKeySharedState";
+static constexpr const wchar_t* SHARED_MEM_NAME = L"Local\\VKeySharedState";
 static constexpr int SEQLOCK_MAX_RETRIES = 3;
 
 struct SharedStateManager::Impl {
@@ -223,7 +223,11 @@ void SharedStateManager::Write(const SharedState& state) noexcept {
     p->convertKeyLo = state.convertKeyLo;
     p->convertKeyHi = state.convertKeyHi;
     p->configGeneration = state.configGeneration;
-    p->reserved0 = state.reserved0;
+    // Phase 1: the renamed byte slot (formerly `tempOffMethod`, now `diagFlags`)
+    // is back in active use. Bit 0 = perf histogram gate; main thread writes it
+    // from TypingConfig.perfHistogramEnabled on config save and hook thread
+    // reads it on QuickSyncFromSharedState's slow path.
+    p->diagFlags = state.diagFlags;
     memcpy(p->reserved, state.reserved, sizeof(state.reserved));
 
     MemoryBarrier();

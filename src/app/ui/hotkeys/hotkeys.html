@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="vi" window-frame="transparent">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phím tắt</title>
+    <link rel="stylesheet" href="../shared/theme.css">
+    <link rel="stylesheet" href="../shared/base.css">
+    <link rel="stylesheet" href="../shared/toggle.css">
+    <link rel="stylesheet" href="../shared/subdialog.css">
+    <link rel="stylesheet" href="../shared/hotkey-capture.css">
+    <link rel="stylesheet" href="hotkeys.css">
+    <script src="../shared/strings.js"></script>
+    <script src="../shared/i18n.js"></script>
+    <script src="../shared/utils.js"></script>
+    <script src="../shared/hotkey-capture.js"></script>
+    <script src="hotkeys.js"></script>
+</head>
+
+<body>
+    <div class="container" id="main-container">
+        <div class="title-bar">
+            <span class="title-text">Phím tắt</span>
+            <button class="btn-close" id="btn-close" title="Đóng">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+                    fill="rgba(240,23,23,1)">
+                    <path
+                        d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 10.5858L9.17157 7.75736L7.75736 9.17157L10.5858 12L7.75736 14.8284L9.17157 16.2426L12 13.4142L14.8284 16.2426L16.2426 14.8284L13.4142 12L16.2426 9.17157L14.8284 7.75736L12 10.5858Z">
+                    </path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="content-section">
+            <div class="info-text">
+                Đổi phím tắt cho 3 chức năng dưới. Nhấn [+] để thêm, [×] để xóa.
+                Phím chính có thể kèm Ctrl / Shift / Alt / Win.
+            </div>
+
+            <div class="hotkeys-grid">
+                <!-- Section: Cancel composition -->
+                <div class="settings-card hotkey-section" data-intent="cancel-composition">
+                    <div class="hotkey-section-header">
+                        <div class="hotkey-section-title">Hủy từ đang gõ</div>
+                        <div class="toggle-switch-small" id="enable-cancel-composition" data-intent="cancel-composition">
+                            <span class="toggle-label-i">I</span>
+                            <span class="toggle-label-o">O</span>
+                            <div class="toggle-thumb-small"></div>
+                        </div>
+                    </div>
+                    <div class="hotkey-chips" id="chips-cancel-composition"></div>
+                    <div class="spacer" style="height: *"></div>
+                    <button class="btn-action btn-secondary btn-add-trigger"
+                            data-intent="cancel-composition">+ Thêm phím</button>
+                </div>
+
+                <!-- Section: Skip macro -->
+                <div class="settings-card hotkey-section" data-intent="skip-macro">
+                    <div class="hotkey-section-header">
+                        <div class="hotkey-section-title">Bỏ qua gõ tắt</div>
+                        <div class="toggle-switch-small" id="enable-skip-macro" data-intent="skip-macro">
+                            <span class="toggle-label-i">I</span>
+                            <span class="toggle-label-o">O</span>
+                            <div class="toggle-thumb-small"></div>
+                        </div>
+                    </div>
+                    <div class="hotkey-chips" id="chips-skip-macro"></div>
+                    <div class="spacer" style="height: *"></div>
+                    <button class="btn-action btn-secondary btn-add-trigger"
+                            data-intent="skip-macro">+ Thêm phím</button>
+                </div>
+
+                <!-- Section: Toggle enabled -->
+                <div class="settings-card hotkey-section" data-intent="toggle-enabled">
+                    <div class="hotkey-section-header">
+                        <div class="hotkey-section-title">Tạm tắt / bật bộ gõ</div>
+                        <div class="toggle-switch-small" id="enable-toggle-enabled" data-intent="toggle-enabled">
+                            <span class="toggle-label-i">I</span>
+                            <span class="toggle-label-o">O</span>
+                            <div class="toggle-thumb-small"></div>
+                        </div>
+                    </div>
+                    <div class="hotkey-chips" id="chips-toggle-enabled"></div>
+                    <div class="spacer" style="height: *"></div>
+                    <button class="btn-action btn-secondary btn-add-trigger"
+                            data-intent="toggle-enabled">+ Thêm phím</button>
+                </div>
+            </div>
+
+            <!-- Capture overlay (hidden by default).
+                 Keydown is captured at document-level via `document.on()` —
+                 see hotkeys.js. No focus target needed. -->
+            <div class="capture-overlay" id="capture-overlay" style="display:none">
+                <div class="capture-box">
+                    <div class="capture-prompt" id="capture-prompt">Nhấn phím cần gắn…</div>
+                    <div class="capture-preview" id="capture-preview">—</div>
+                    <div class="button-row">
+                        <button class="btn-action btn-primary" id="btn-capture-save" disabled>Lưu</button>
+                        <button class="btn-action btn-secondary" id="btn-capture-cancel">Hủy</button>
+                    </div>
+                    <div class="capture-hint">Nhấn 1 phím (Esc, F1, A...) ± Ctrl/Shift/Alt/Win. Nhấn 1 phím 2 lần nhanh để gắn dạng 2× (ví dụ 2×Alt).</div>
+                </div>
+            </div>
+
+            <div class="button-row footer-row">
+                <button class="btn-action btn-secondary" id="btn-reset">↻ Khôi phục mặc định</button>
+            </div>
+        </div>
+
+        <!-- Hidden inputs the C++ side reads -->
+        <input type="hidden" id="val-action" value="">
+        <input type="hidden" id="val-intent" value="">
+        <input type="hidden" id="val-vk" value="0">
+        <input type="hidden" id="val-mods" value="0">
+        <input type="hidden" id="val-double-tap" value="false">
+        <input type="hidden" id="val-enabled" value="false">
+    </div>
+</body>
+
+</html>

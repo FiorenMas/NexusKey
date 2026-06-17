@@ -1,5 +1,5 @@
-// NexusKey - TSF Language Bar Button Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Language Bar Button Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "LanguageBarButton.h"
@@ -146,7 +146,7 @@ IFACEMETHODIMP LanguageBarButton::OnClick(TfLBIClick click, POINT pt, const RECT
 
         AppendMenuW(hMenu, MF_STRING, MENU_ID_SETTINGS, L"Settings...");
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING, MENU_ID_ABOUT, L"About NexusKey");
+        AppendMenuW(hMenu, MF_STRING, MENU_ID_ABOUT, L"About VKey");
 
         UINT flags = TPM_NONOTIFY | TPM_RETURNCMD;
         if (GetSystemMetrics(SM_MENUDROPALIGNMENT)) {
@@ -192,7 +192,7 @@ IFACEMETHODIMP LanguageBarButton::InitMenu(ITfMenu* pMenu) {
 
     pMenu->AddMenuItem(MENU_ID_SETTINGS, 0, nullptr, nullptr, L"Settings...", 12, nullptr);
     pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, L"", 0, nullptr);
-    pMenu->AddMenuItem(MENU_ID_ABOUT, 0, nullptr, nullptr, L"About NexusKey", 15, nullptr);
+    pMenu->AddMenuItem(MENU_ID_ABOUT, 0, nullptr, nullptr, L"About VKey", 15, nullptr);
 
     return S_OK;
 }
@@ -220,7 +220,7 @@ IFACEMETHODIMP LanguageBarButton::OnMenuSelect(UINT wID) {
             if (pos != std::wstring::npos) {
                 exePath = exePath.substr(0, pos + 1);
             }
-            exePath += L"NexusKey.exe";
+            exePath += L"VKey.exe";
 
             ShellExecuteW(nullptr, L"open", exePath.c_str(), L"--settings", nullptr, SW_SHOW);
             break;

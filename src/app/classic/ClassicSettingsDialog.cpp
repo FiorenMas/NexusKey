@@ -1,13 +1,18 @@
-// NexusKey Classic — Settings Dialog Implementation
+// VKey Classic — Settings Dialog Implementation
 // Compact (Unikey-style) + Advanced (EVKey-style) modes
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicSettingsDialog.h"
+#include "helpers/AppHelpers.h"
 #include "ClassicExcludedAppsDialog.h"
+#include "ClassicTsfAppsDialog.h"
+#include "system/TsfRegistration.h"
 #include "ClassicSpellExclusionsDialog.h"
 #include "ClassicAppOverridesDialog.h"
 #include "ClassicMacroTableDialog.h"
+#include "ClassicUserDefinedDialog.h"
 #include "ClassicConvertToolDialog.h"
+#include "ClassicHotkeysDialog.h"
 #include "ClassicIconColorDialog.h"
 #include "core/config/ConfigManager.h"
 #include "core/ipc/SharedConstants.h"
@@ -17,6 +22,7 @@
 #include "system/StartupHelper.h"
 #include "system/UpdateChecker.h"
 #include "system/PendingDllApply.h"
+#include "system/DebugLogWarning.h"
 #include "core/Strings.h"
 
 #include <exception>
@@ -55,13 +61,15 @@ bool ClassicSettingsDialog::Show(HINSTANCE hInstance, HWND parent) {
     LoadSettings();
 
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    std::wstring title = L"VKey v" VKEY_VERSION_WSTR;
+    if (IsRunningAsAdmin())
+        title += L" - Admin";
 
     hwnd_ = CreateWindowExW(
         0,
         kClassName,
-        L"NexusKey v" NEXUSKEY_VERSION_WSTR,
+        title.c_str(),
         style,
         CW_USEDEFAULT, CW_USEDEFAULT, 400, 300,  // temporary size
         parent, nullptr, hInstance, this
@@ -80,9 +88,8 @@ bool ClassicSettingsDialog::Show(HINSTANCE hInstance, HWND parent) {
     AdjustWindowRect(&rc, style, FALSE);
     int adjWidth  = rc.right - rc.left;
     int adjHeight = rc.bottom - rc.top;
-    int x = (screenW - adjWidth) / 2;
-    int y = (screenH - adjHeight) / 2;
-    SetWindowPos(hwnd_, nullptr, x, y, adjWidth, adjHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    POINT pt = NextKey::GetCenteredPos(hwnd_, adjWidth, adjHeight);
+    SetWindowPos(hwnd_, nullptr, pt.x, pt.y, adjWidth, adjHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
     theme_.Init(hwnd_, systemConfig_.forceLightTheme);
     theme_.ApplyWindowAttributes(hwnd_);
@@ -117,7 +124,7 @@ bool ClassicSettingsDialog::Show(HINSTANCE hInstance, HWND parent) {
             : S(StringId::UPDATE_BANNER_MISMATCH);
         // User already confirms reboot intent in THIS MessageBox; skip the
         // second prompt in RestartWindowsWithPrompt — call the no-UI variant.
-        if (MessageBoxW(hwnd_, msg, L"NexusKey",
+        if (MessageBoxW(hwnd_, msg, L"VKey",
                         MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) == IDOK) {
             RestartWindowsNow();
         }
@@ -208,11 +215,17 @@ void ClassicSettingsDialog::CreateCompactControls() {
     CreateLabel(L"Bảng mã", col2X, y, colW, Dpi(kLabelHeight), IDC_STATIC_ENCODING);
     y += Dpi(kLabelHeight + kRowGap);
 
-    comboMethod_ = CreateCombo(x1, y, colW, Dpi(kComboHeight + 120), IDC_COMBO_METHOD);
+    comboMethod_ = CreateCombo(x1, y, colW - Dpi(24), Dpi(kComboHeight + 120), IDC_COMBO_METHOD);
     ComboBox_AddString(comboMethod_, L"Telex");
     ComboBox_AddString(comboMethod_, L"VNI");
     ComboBox_AddString(comboMethod_, L"Simple Telex");
     ComboBox_AddString(comboMethod_, L"Telex + VNI");
+    ComboBox_AddString(comboMethod_, L"Tự định nghĩa");
+
+    // Button to open UserDefined dialog (...)
+    int btnSize = Dpi(kComboHeight);
+    btnCustomKeymap_ = CreateBtn(L"...", x1 + colW - Dpi(22), y, Dpi(22), btnSize, IDC_BTN_CUSTOM_KEYMAP);
+    theme_.ThemeChildControl(btnCustomKeymap_);
 
     comboEncoding_ = CreateCombo(col2X, y, colW, Dpi(kComboHeight + 120), IDC_COMBO_ENCODING);
     ComboBox_AddString(comboEncoding_, L"Unicode");
@@ -456,7 +469,7 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
 
         // If it's an inline action button
         bool isInlineAction = (meta.type == SettingType::Action && 
-            (wcscmp(meta.label, L"...") == 0 || meta.win32Id == IDC_BTN_CHECK_UPDATE));
+            (wcscmp(meta.label, L"...") == 0 || meta.win32Id == IDC_BTN_CHECK_UPDATE || meta.win32Id == IDC_BTN_OPEN_LOG_FOLDER));
         if (isInlineAction) {
             rowCounts[tab][col]--; // stay on the same visual row
             row--; // go back to the row we just incremented past
@@ -467,7 +480,7 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
 
         if (meta.type == SettingType::Toggle) {
             bool hasInlineNext = ((i + 1 < kSettingsCount) && kSettings[i+1].type == SettingType::Action && 
-                (wcscmp(kSettings[i+1].label, L"...") == 0 || kSettings[i+1].win32Id == IDC_BTN_CHECK_UPDATE));
+                (wcscmp(kSettings[i+1].label, L"...") == 0 || kSettings[i+1].win32Id == IDC_BTN_CHECK_UPDATE || kSettings[i+1].win32Id == IDC_BTN_OPEN_LOG_FOLDER));
             int nextBtnW = 0;
             if (hasInlineNext) {
                 nextBtnW = (wcscmp(kSettings[i+1].label, L"...") == 0) ? Dpi(26) : Dpi(70);
@@ -489,17 +502,10 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
             HWND lbl = CreateLabel(meta.label, cx, cy + Dpi(4), lblW, Dpi(kControlHeight), 0);
             extraControls_[i] = lbl;
             HWND combo = CreateCombo(cx + lblW + Dpi(4), cy, comboW, Dpi(kComboHeight + 60), meta.win32Id);
-            if (wcscmp(meta.id, L"custom-icon-style") == 0) {
-                ComboBox_AddString(combo, L"Màu mặc định");
-                ComboBox_AddString(combo, L"Nền tối");
-                ComboBox_AddString(combo, L"Nền sáng");
-                ComboBox_AddString(combo, L"Tự chọn");
-                ComboBox_AddString(combo, L"Tự động");
-            }
-            if (wcscmp(meta.id, L"startup-mode") == 0) {
-                ComboBox_AddString(combo, L"Tiếng Việt");
-                ComboBox_AddString(combo, L"Tiếng Anh");
-                ComboBox_AddString(combo, L"Ghi nhớ");
+            if (meta.itemsVi) {
+                for (auto p = meta.itemsVi; *p; ++p) {
+                    ComboBox_AddString(combo, *p);
+                }
             }
             checkControls_[i] = combo;
         }
@@ -518,7 +524,7 @@ void ClassicSettingsDialog::CreateAdvancedControls() {
         GetWindowRect(tabControl_, &tcRc);
         MapWindowPoints(HWND_DESKTOP, hwnd_, reinterpret_cast<LPPOINT>(&tcRc), 2);
         linkReportBug_ = CreateWindowExW(0, WC_LINK,
-            L"<a href=\"https://github.com/phatMT97/NexusKey/issues\">Báo cáo lỗi</a>",
+            L"<a href=\"https://github.com/phatMT97/VKey/issues\">Báo cáo lỗi</a>",
             WS_CHILD | WS_VISIBLE,
             tcRc.right - Dpi(90), tcRc.bottom - Dpi(26), Dpi(80), Dpi(16),
             hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LINK_REPORT_BUG)),
@@ -543,6 +549,11 @@ void ClassicSettingsDialog::LoadSettings() {
     hotkeyConfig_ = ConfigManager::LoadHotkeyConfigOrDefault();
     systemConfig_ = ConfigManager::LoadSystemConfigOrDefault();
 
+    // Derive tsfApps from actual DLL registration state — user may have run
+    // regsvr32 /u manually, or a prior toggle may have partially failed.
+    // Mirrors Sciter behaviour in SettingsDialog.cpp:1042.
+    config_.tsfApps = IsTsfRegistered();
+
     (void)sharedState_.OpenReadWrite();
     (void)configEvent_.Initialize();
 }
@@ -552,6 +563,8 @@ void ClassicSettingsDialog::PopulateControls() {
         ComboBox_SetCurSel(comboMethod_, static_cast<int>(config_.inputMethod));
     if (comboEncoding_)
         ComboBox_SetCurSel(comboEncoding_, static_cast<int>(config_.codeTable));
+
+    UpdateCustomKeyMapButtonVisibility();
 
     for (size_t i = 0; i < kSettingsCount && i < kMaxControls; ++i) {
         const auto& meta = kSettings[i];
@@ -583,6 +596,10 @@ void ClassicSettingsDialog::PopulateControls() {
         } else if (meta.type == SettingType::Dropdown) {
             uint8_t value = 0;
             switch (meta.owner) {
+                case SettingOwner::Typing:
+                    value = *reinterpret_cast<const uint8_t*>(
+                        reinterpret_cast<const char*>(&config_) + meta.offset);
+                    break;
                 case SettingOwner::System:
                     value = *reinterpret_cast<const uint8_t*>(
                         reinterpret_cast<const char*>(&systemConfig_) + meta.offset);
@@ -594,12 +611,24 @@ void ClassicSettingsDialog::PopulateControls() {
         }
     }
 
+    // Single-char edit box; vk ↔ char round-trip via VkKeyScanW (save) and
+    // MapVirtualKeyW (load). Printable keys including OEM punctuation are
+    // supported. F-row / arrows / non-printable VKs survive load but render
+    // blank — rebind via the unified Hotkeys dialog if needed.
     if (editHotkey_) {
-        if (hotkeyConfig_.key == L' ') {
+        uint32_t vk = hotkeyConfig_.vk;
+        if (vk == 0x20) {
             SetWindowTextW(editHotkey_, L"Space");
-        } else if (hotkeyConfig_.key) {
-            wchar_t buf[2] = { hotkeyConfig_.key, 0 };
-            SetWindowTextW(editHotkey_, buf);
+        } else if (vk != 0) {
+            // Mask bit 15 — drops the dead-key flag on layouts where the
+            // unshifted char (vd. ` ~ ^) is a deadkey.
+            wchar_t c = static_cast<wchar_t>(MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR) & 0x7FFF);
+            if (c != 0) {
+                wchar_t buf[2] = { static_cast<wchar_t>(towupper(c)), 0 };
+                SetWindowTextW(editHotkey_, buf);
+            } else {
+                SetWindowTextW(editHotkey_, L"");
+            }
         } else {
             SetWindowTextW(editHotkey_, L"");
         }
@@ -611,7 +640,8 @@ void ClassicSettingsDialog::PopulateControls() {
 void ClassicSettingsDialog::ReadControlValues() {
     if (comboMethod_) {
         int sel = ComboBox_GetCurSel(comboMethod_);
-        if (sel >= 0 && sel <= 3)
+        // Telex=0, VNI=1, SimpleTelex=2, Combined=3, UserDefined=4
+        if (sel >= 0 && sel <= 4)
             config_.inputMethod = static_cast<InputMethod>(sel);
     }
     if (comboEncoding_) {
@@ -651,6 +681,10 @@ void ClassicSettingsDialog::ReadControlValues() {
             if (sel >= 0) {
                 uint8_t value = static_cast<uint8_t>(sel);
                 switch (meta.owner) {
+                    case SettingOwner::Typing:
+                        *reinterpret_cast<uint8_t*>(
+                            reinterpret_cast<char*>(&config_) + meta.offset) = value;
+                        break;
                     case SettingOwner::System:
                         *reinterpret_cast<uint8_t*>(
                             reinterpret_cast<char*>(&systemConfig_) + meta.offset) = value;
@@ -662,17 +696,23 @@ void ClassicSettingsDialog::ReadControlValues() {
         }
     }
 
+    // Same VkKeyScanW rule as the load side above. Non-mappable input
+    // (paste of multi-char, non-printable) drops to vk=0 (user rebinds).
     if (editHotkey_) {
         wchar_t buf[16] = {0};
         GetWindowTextW(editHotkey_, buf, 16);
-        if (wcscmp(buf, L"Space") == 0) {
-            hotkeyConfig_.key = L' ';
+        if (_wcsicmp(buf, L"Space") == 0) {
+            hotkeyConfig_.vk = 0x20;  // VK_SPACE
         } else if (wcslen(buf) > 0) {
-            wchar_t key = buf[0];
-            if (key >= L'a' && key <= L'z') key = key - L'a' + L'A';
-            hotkeyConfig_.key = key;
+            wchar_t c = buf[0];
+            SHORT scan = VkKeyScanW(c);
+            if (scan != -1) {
+                hotkeyConfig_.vk = static_cast<uint32_t>(LOBYTE(scan));
+            } else {
+                hotkeyConfig_.vk = 0;
+            }
         } else {
-            hotkeyConfig_.key = 0;
+            hotkeyConfig_.vk = 0;
         }
     }
 
@@ -786,6 +826,9 @@ void ClassicSettingsDialog::OnCommand(WPARAM wParam, LPARAM lParam) {
         case IDC_COMBO_ENCODING:
             if (code == CBN_SELCHANGE) {
                 SaveSettings();
+                if (id == IDC_COMBO_METHOD) {
+                    UpdateCustomKeyMapButtonVisibility();
+                }
             } else if (code == CBN_DROPDOWN && theme_.IsDark()) {
                 BOOL anim = FALSE;
                 SystemParametersInfoW(SPI_GETCOMBOBOXANIMATION, 0, &anim, 0);
@@ -801,6 +844,7 @@ void ClassicSettingsDialog::OnCommand(WPARAM wParam, LPARAM lParam) {
             }
             return;
 
+        case IDC_BTN_CUSTOM_KEYMAP:
         case IDC_BTN_SPELL_EXCLUSIONS:
             if (code == BN_CLICKED) {
                 OnActionButton(static_cast<uint16_t>(id));
@@ -815,6 +859,20 @@ void ClassicSettingsDialog::OnCommand(WPARAM wParam, LPARAM lParam) {
     if (code == BN_CLICKED || code == CBN_SELCHANGE) {
         const auto* meta = FindSettingByControlId(static_cast<uint16_t>(id));
         if (meta) {
+            // Debug log security gate: confirm before *enabling*. The Win32
+            // checkbox flips state itself on click — read the post-click state
+            // and roll it back if the user picks Cancel.
+            if (meta->type == SettingType::Toggle && meta->win32Id == IDC_CHECK_DEBUG_LOG
+                && code == BN_CLICKED) {
+                bool nowChecked = (IsDlgButtonChecked(hwnd_, IDC_CHECK_DEBUG_LOG) == BST_CHECKED);
+                if (nowChecked && !config_.debugLogEnabled) {
+                    bool englishUi = (systemConfig_.language == 1);
+                    if (!::NextKey::ShowDebugLogWarning(hwnd_, englishUi)) {
+                        CheckDlgButton(hwnd_, IDC_CHECK_DEBUG_LOG, BST_UNCHECKED);
+                        return;  // skip SaveSettings — config stays at debugLogEnabled=false
+                    }
+                }
+            }
             if (meta->type == SettingType::Action) {
                 OnActionButton(meta->win32Id);
             } else {
@@ -829,8 +887,8 @@ void ClassicSettingsDialog::OnCommand(WPARAM wParam, LPARAM lParam) {
                     SaveSettings();
                     KillTimer(hwnd_, kTimerDeferredSave);
                     SaveToToml();
-                    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-                    if (trayWnd) PostMessageW(trayWnd, WM_NEXUSKEY_ICON_CHANGED, 0, 0);
+                    HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
+                    if (trayWnd) PostMessageW(trayWnd, WM_VKEY_ICON_CHANGED, 0, 0);
                     return;
                 }
 
@@ -848,6 +906,23 @@ void ClassicSettingsDialog::OnCommand(WPARAM wParam, LPARAM lParam) {
                 // Spell check controls child toggles (zwjf, auto-restore, exclusions button)
                 if (meta->win32Id == IDC_CHECK_SPELL) {
                     UpdateSpellCheckChildren();
+                }
+
+                // TSF-apps toggle registers/unregisters the TSF DLL.
+                // Mirrors the Sciter handler in SettingsDialog.cpp:575-610.
+                if (meta->win32Id == IDC_CHECK_TSF_APPS) {
+                    bool checked = (IsDlgButtonChecked(hwnd_, IDC_CHECK_TSF_APPS) == BST_CHECKED);
+                    if (!OnTsfAppsToggle(checked)) {
+                        // Revert checkbox + config.
+                        CheckDlgButton(hwnd_, IDC_CHECK_TSF_APPS, checked ? BST_UNCHECKED : BST_CHECKED);
+                        config_.tsfApps = !checked;
+                    }
+                    // Persist immediately on BOTH success and failure paths.
+                    // Reality (registry) has already changed; if a subdialog opens
+                    // and triggers LoadSettings() before the deferred timer fires,
+                    // unrelated in-memory Typing edits would be reverted to stale TOML.
+                    KillTimer(hwnd_, kTimerDeferredSave);
+                    SaveToToml();
                 }
 
                 // System toggles have side effects beyond config save
@@ -878,8 +953,19 @@ void ClassicSettingsDialog::OnActionButton(uint16_t controlId) {
             PopulateControls();
             break;
 
+        case IDC_BTN_CUSTOM_KEYMAP:
+            ClassicUserDefinedDialog::Show(hInstance_, hwnd_, systemConfig_.forceLightTheme);
+            // Reload config
+            LoadSettings();
+            PopulateControls();
+            break;
+
         case IDC_BTN_EXCLUDE_APPS:
             ClassicExcludedAppsDialog::Show(hInstance_, hwnd_, systemConfig_.forceLightTheme);
+            break;
+
+        case IDC_BTN_TSF_APPS:
+            ClassicTsfAppsDialog::Show(hInstance_, hwnd_, systemConfig_.forceLightTheme);
             break;
 
         case IDC_BTN_SPELL_EXCLUSIONS:
@@ -891,6 +977,28 @@ void ClassicSettingsDialog::OnActionButton(uint16_t controlId) {
         case IDC_BTN_MACRO_TABLE:
             ClassicMacroTableDialog::Show(hInstance_, hwnd_, systemConfig_.forceLightTheme);
             break;
+
+        case IDC_BTN_HOTKEYS:
+            ClassicHotkeysDialog::Show(hInstance_, hwnd_, systemConfig_.forceLightTheme);
+            break;
+
+        case IDC_BTN_OPEN_LOG_FOLDER: {
+            std::wstring folder = ::NextKey::Logger::GetCurrentLogFolder();
+            if (folder.empty()) {
+                wchar_t buf[MAX_PATH] = {0};
+                DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+                if (n > 0) {
+                    std::wstring exePath(buf);
+                    size_t slash = exePath.find_last_of(L"\\/");
+                    if (slash != std::wstring::npos) folder = exePath.substr(0, slash);
+                }
+            }
+            if (!folder.empty()) {
+                ShellExecuteW(nullptr, L"open", folder.c_str(),
+                              nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            break;
+        }
 
         case IDC_BTN_CHECK_UPDATE: {
             HWND dlgHwnd = hwnd_;
@@ -933,7 +1041,7 @@ void ClassicSettingsDialog::OnActionButton(uint16_t controlId) {
                         }
                         // Signal main process to exit so the updater can replace files.
                         // Without this, updater waits 30s then proceeds while we're still running.
-                        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+                        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
                         if (trayWnd) {
                             PostMessageW(trayWnd, WM_CLOSE, 0, 0);
                         }
@@ -966,7 +1074,15 @@ void ClassicSettingsDialog::UpdateSpellCheckChildren() {
     if (zwjf)       EnableWindow(zwjf, enable);
     if (restore)    EnableWindow(restore, enable);
     if (exclusions) EnableWindow(exclusions, enable);
-}
+    }
+
+    void ClassicSettingsDialog::UpdateCustomKeyMapButtonVisibility() {
+    int sel = ComboBox_GetCurSel(comboMethod_);
+    // UserDefined is index 4
+    if (btnCustomKeymap_) {
+        EnableWindow(btnCustomKeymap_, sel == 4);
+    }
+    }
 
 // ════════════════════════════════════════════════════════════════════
 // System toggle side effects
@@ -998,9 +1114,9 @@ void ClassicSettingsDialog::OnSystemToggle(const wchar_t* id, bool value) {
         SaveToToml();
         // Restart main process to apply elevation change.
         // Startup registration handled by EnsureStartupRegistration() in new instance.
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
         if (trayWnd) {
-            PostMessageW(trayWnd, WM_NEXUSKEY_RESTART, 0, 0);
+            PostMessageW(trayWnd, WM_VKEY_RESTART, 0, 0);
         }
     }
     else if (wcscmp(id, L"desktop-shortcut") == 0) {
@@ -1013,15 +1129,15 @@ void ClassicSettingsDialog::OnSystemToggle(const wchar_t* id, bool value) {
         // Flush + notify tray to rebuild menu in new language
         KillTimer(hwnd_, kTimerDeferredSave);
         SaveToToml();
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-        if (trayWnd) PostMessageW(trayWnd, WM_NEXUSKEY_ICON_CHANGED, 0, 0);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
+        if (trayWnd) PostMessageW(trayWnd, WM_VKEY_ICON_CHANGED, 0, 0);
     }
     else if (wcscmp(id, L"floating-icon") == 0) {
         // Flush TOML + notify main thread to show/hide floating icon immediately
         KillTimer(hwnd_, kTimerDeferredSave);
         SaveToToml();
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-        if (trayWnd) PostMessageW(trayWnd, WM_NEXUSKEY_ICON_CHANGED, 0, 0);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
+        if (trayWnd) PostMessageW(trayWnd, WM_VKEY_ICON_CHANGED, 0, 0);
     }
     else if (wcscmp(id, L"force-light-theme") == 0) {
         // Re-init theme with new setting, repaint entire window
@@ -1040,6 +1156,52 @@ void ClassicSettingsDialog::OnSystemToggle(const wchar_t* id, bool value) {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// TSF-apps toggle side effect — register/unregister TSF DLL
+// ════════════════════════════════════════════════════════════════════
+
+bool ClassicSettingsDialog::OnTsfAppsToggle(bool wantsEnabled) {
+    // Synchronous regsvr32 mirrors the Sciter handler in SettingsDialog.cpp:575-610.
+    // Known limitation: blocks the UI thread for ~1s during elevation prompt; an
+    // async port (background thread + PostMessage) is tracked in docs/TODO.md.
+    if (wantsEnabled) {
+        // Always attempt full registration (not guarded by IsTsfRegistered) because
+        // a previous partial failure could leave CLSID in registry but TIP profile missing.
+        bool ok = RegisterTsf();
+        if (!ok) {
+            ok = RegisterTsfElevated();
+        }
+        if (!ok || !IsTsfRegistered()) {
+            // No StringId exists yet for register-failure — Sciter also hardcodes VI here.
+            MessageBoxW(hwnd_,
+                L"Không thể đăng ký TSF.\nVui lòng chạy với quyền Administrator.",
+                L"VKey", MB_OK | MB_ICONWARNING);
+            return false;
+        }
+        MessageBoxW(hwnd_, S(StringId::TSF_REGISTER_SUCCESS),
+            L"VKey", MB_OK | MB_ICONINFORMATION);
+        return true;
+    }
+
+    // Disabling — only attempt unregister if currently registered.
+    if (IsTsfRegistered()) {
+        UnregisterTsf();
+        // DllUnregisterServer may return S_OK even when it can't delete HKLM keys
+        // without admin — verify actual state before deciding to elevate.
+        if (IsTsfRegistered()) {
+            UnregisterTsfElevated();
+        }
+        if (IsTsfRegistered()) {
+            MessageBoxW(hwnd_, S(StringId::TSF_UNREGISTER_FAILED),
+                L"VKey", MB_OK | MB_ICONWARNING);
+            return false;
+        }
+        MessageBoxW(hwnd_, S(StringId::TSF_UNREGISTER_SUCCESS),
+            L"VKey", MB_OK | MB_ICONINFORMATION);
+    }
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Icon color picker (ChooseColor API)
 // ════════════════════════════════════════════════════════════════════
 
@@ -1055,8 +1217,8 @@ void ClassicSettingsDialog::OnPickIconColors() {
         // Flush + notify immediately so tray icon updates
         KillTimer(hwnd_, kTimerDeferredSave);
         SaveToToml();
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
-        if (trayWnd) PostMessageW(trayWnd, WM_NEXUSKEY_ICON_CHANGED, 0, 0);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
+        if (trayWnd) PostMessageW(trayWnd, WM_VKEY_ICON_CHANGED, 0, 0);
     }
 }
 
@@ -1101,35 +1263,27 @@ void ClassicSettingsDialog::RefreshLabels() {
         }
     }
 
-    // Icon style dropdown items
-    HWND iconCombo = GetDlgItem(hwnd_, IDC_COMBO_ICON_STYLE);
-    if (iconCombo) {
-        int sel = ComboBox_GetCurSel(iconCombo);
-        ComboBox_ResetContent(iconCombo);
-        ComboBox_AddString(iconCombo, en ? L"Default color" : L"Màu mặc định");
-        ComboBox_AddString(iconCombo, en ? L"Dark" : L"Nền tối");
-        ComboBox_AddString(iconCombo, en ? L"Light" : L"Nền sáng");
-        ComboBox_AddString(iconCombo, en ? L"Custom" : L"Tự chọn");
-        ComboBox_AddString(iconCombo, en ? L"Auto" : L"Tự động");
-        if (sel >= 0) ComboBox_SetCurSel(iconCombo, sel);
-    }
-
-    // Startup mode dropdown items
-    HWND startupCombo = GetDlgItem(hwnd_, IDC_COMBO_STARTUP_MODE);
-    if (startupCombo) {
-        int sel = ComboBox_GetCurSel(startupCombo);
-        ComboBox_ResetContent(startupCombo);
-        ComboBox_AddString(startupCombo, en ? L"Vietnamese" : L"Tiếng Việt");
-        ComboBox_AddString(startupCombo, en ? L"English" : L"Tiếng Anh");
-        ComboBox_AddString(startupCombo, en ? L"Remember" : L"Ghi nhớ");
-        if (sel >= 0) ComboBox_SetCurSel(startupCombo, sel);
+    // Refresh dropdown items in the active language. Items live in metadata.
+    for (size_t i = 0; i < kSettingsCount && i < kMaxControls; ++i) {
+        const auto& meta = kSettings[i];
+        if (meta.type != SettingType::Dropdown || !meta.itemsVi) continue;
+        HWND combo = checkControls_[i];
+        if (!combo) continue;
+        int sel = ComboBox_GetCurSel(combo);
+        ComboBox_ResetContent(combo);
+        const wchar_t* const* items =
+            (en && meta.itemsEn) ? meta.itemsEn : meta.itemsVi;
+        for (auto p = items; *p; ++p) {
+            ComboBox_AddString(combo, *p);
+        }
+        if (sel >= 0) ComboBox_SetCurSel(combo, sel);
     }
 
     // Report bug link
     if (linkReportBug_) {
         SetWindowTextW(linkReportBug_, en
-            ? L"<a href=\"https://github.com/phatMT97/NexusKey/issues\">Report bug</a>"
-            : L"<a href=\"https://github.com/phatMT97/NexusKey/issues\">Báo cáo lỗi</a>");
+            ? L"<a href=\"https://github.com/phatMT97/VKey/issues\">Report bug</a>"
+            : L"<a href=\"https://github.com/phatMT97/VKey/issues\">Báo cáo lỗi</a>");
     }
 
     // Tooltips
@@ -1309,7 +1463,7 @@ LRESULT CALLBACK ClassicSettingsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wPar
             self->OnCommand(wParam, lParam);
             return 0;
 
-        case WM_NEXUSKEY_CONFIG_CHANGED:
+        case WM_VKEY_CONFIG_CHANGED:
             self->LoadSettings();
             self->PopulateControls();
             return 0;
@@ -1337,7 +1491,7 @@ LRESULT CALLBACK ClassicSettingsDialog::WndProc(HWND hwnd, UINT msg, WPARAM wPar
             }
             if (hdr->idFrom == IDC_LINK_REPORT_BUG && (hdr->code == NM_CLICK || hdr->code == NM_RETURN)) {
                 ShellExecuteW(nullptr, L"open",
-                    L"https://github.com/phatMT97/NexusKey/issues",
+                    L"https://github.com/phatMT97/VKey/issues",
                     nullptr, nullptr, SW_SHOW);
             }
             return 0;

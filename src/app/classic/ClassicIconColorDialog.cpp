@@ -1,7 +1,8 @@
-// NexusKey Classic — Icon Color Customization Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Icon Color Customization Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicIconColorDialog.h"
+#include "helpers/AppHelpers.h"
 #include "core/CrashLog.h"
 #include <commdlg.h>
 #include <exception>
@@ -68,8 +69,8 @@ bool ClassicIconColorDialog::Init(HINSTANCE hInstance, HWND parent,
     RECT rc = {0, 0, w, h};
     AdjustWindowRectEx(&rc, style, FALSE, WS_EX_TOPMOST);
     int aw = rc.right - rc.left, ah = rc.bottom - rc.top;
-    int sx = GetSystemMetrics(SM_CXSCREEN), sy = GetSystemMetrics(SM_CYSCREEN);
-    SetWindowPos(hwnd_, nullptr, (sx - aw) / 2, (sy - ah) / 2, aw, ah, SWP_NOZORDER);
+    POINT pt = NextKey::GetCenteredPos(hwnd_, aw, ah);
+    SetWindowPos(hwnd_, nullptr, pt.x, pt.y, aw, ah, SWP_NOZORDER);
 
     theme_.Init(hwnd_, forceLightTheme);
     theme_.ApplyWindowAttributes(hwnd_);

@@ -1,7 +1,7 @@
-// NexusKey - Input Engine Factory Implementation
+// VKey - Input Engine Factory Implementation
 // Copyright (c) 2024-2026 PhatMT. All rights reserved.
-// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-NexusKey-Commercial
-// Dual-licensed: GPL-3.0 for open-source use, commercial license for proprietary use.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-VKey-Commercial
+// Dual-licensed: AGPL-3.0 for open-source use, commercial license for proprietary use.
 // See LICENSE and LICENSE-COMMERCIAL in the project root.
 
 #include "EngineFactory.h"

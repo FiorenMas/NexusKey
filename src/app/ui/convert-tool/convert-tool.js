@@ -11,6 +11,7 @@ function initConvertToolDialog() {
     initSwapButton();
     initModeSwitching();
     initBrowseButtons();
+    initHotkeyCapture();
 }
 
 // Mode switching: Clipboard vs File
@@ -175,33 +176,60 @@ function initSwapButton() {
     }
 }
 
-// Hotkey input - handled by document.on event delegation below
+// Hotkey capture — uses shared/hotkey-capture.js. Convert-tool disallows
+// double-tap (no 2×Alt gesture) and bare modifier (no Ctrl-alone trigger);
+// HotkeyManager runtime would not match those for the convert slot anyway.
+function initHotkeyCapture() {
+    var capture = NextKeyHotkeyCapture.create({
+        allowDoubleTap:    false,
+        allowBareModifier: false,
+        onCommit: function (vk, mods, _doubleTap, label) {
+            document.getElementById("val-hotkey-vk").value   = String(vk);
+            document.getElementById("val-hotkey-mods").value = String(mods);
+            setHotkeyDisplay(label);
+            // Fire VALUE_CHANGED so C++ ConvertToolDialog persists immediately.
+            document.getElementById("val-hotkey-vk").dispatchEvent(
+                new Event("change", { bubbles: true }));
+        }
+    });
 
-// Handle text input changes - display "Space" for space character
-document.on("change", "#hotkey-char", function (evt, input) {
-    var keyChar = input.value;
+    var btn = document.getElementById("btn-record-hotkey");
+    if (btn) btn.addEventListener("click", function () { capture.open(); });
 
-    if (keyChar === " ") {
-        input.value = "Space";
-    } else if (keyChar === "Space") {
-        // Keep "Space" displayed
-    } else if (keyChar.length === 0) {
-        // Empty - user deleted everything
-    } else if (keyChar.length === 1) {
-        // Single character - uppercase
-        input.value = keyChar.toUpperCase();
-    } else {
-        // Partial text - clear it
-        input.value = "";
+    // Clear button — wipes vk + mods, updates label, fires VALUE_CHANGED.
+    // C++ side reads both hidden inputs together and persists the empty
+    // HotkeyConfig (HotkeyManager skips slots with !HasAny()).
+    var clearBtn = document.getElementById("btn-clear-hotkey");
+    if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+            if (clearBtn.getAttribute("disabled")) return;
+            document.getElementById("val-hotkey-vk").value   = "0";
+            document.getElementById("val-hotkey-mods").value = "0";
+            setHotkeyDisplay("");
+            document.getElementById("val-hotkey-vk").dispatchEvent(
+                new Event("change", { bubbles: true }));
+        });
     }
-});
+}
 
-// Real-time conversion for space
-document.on("input", "#hotkey-char", function (evt, input) {
-    if (input.value === " ") {
-        input.value = "Space";
+// Setter the C++ side calls after loading config to render the existing
+// binding into the record button. Pairs with ConvertToolDialog::setHotkeyDisplay.
+function setHotkeyDisplay(label) {
+    var el = document.getElementById("hotkey-display");
+    if (el) el.textContent = label || "— Chưa đặt —";
+    // Clear button is meaningful only when a binding exists.
+    var clearBtn = document.getElementById("btn-clear-hotkey");
+    if (clearBtn) {
+        if (label && label.length) clearBtn.removeAttribute("disabled");
+        else                       clearBtn.setAttribute("disabled", "disabled");
     }
-});
+}
+
+// Uploaded by C++ at DOCUMENT_COMPLETE so the capture overlay can render
+// "Space" / "PgUp" etc. instead of the bare-decimal fallback "VK_32".
+function setVkNames(pairs) {
+    NextKeyHotkeyCapture.setVkNames(pairs);
+}
 
 // Trigger action via hidden input (for C++ to detect)
 function triggerAction(action) {

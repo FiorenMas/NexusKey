@@ -1,5 +1,5 @@
-// NexusKey - Text Service Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Text Service Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

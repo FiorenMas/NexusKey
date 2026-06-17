@@ -1,25 +1,27 @@
-NexusKey Commercial License
+VKey Commercial License
 ===========================
 
 Copyright (c) 2024-2026 PhatMT. All rights reserved.
 
-The NexusKey Engine (files under src/core/engine/) is dual-licensed:
+The VKey Engine (files under src/core/engine/) is dual-licensed:
 
-1. GNU General Public License v3.0 (GPL-3.0) — see LICENSE file.
-   You may use, modify, and redistribute the Engine under GPL-3.0 terms,
-   which requires derivative works to also be licensed under GPL-3.0.
+1. GNU Affero General Public License v3.0 (AGPL-3.0) — see LICENSE file.
+   You may use, modify, and redistribute the Engine under AGPL-3.0 terms,
+   which requires derivative works to also be licensed under AGPL-3.0
+   (including derivatives offered as a network service).
 
 2. Commercial License (this file).
-   For use in proprietary/closed-source software, or any use that is
-   incompatible with GPL-3.0, you must obtain a commercial license
-   from the copyright holder.
+   For use in proprietary/closed-source software, network/SaaS deployment
+   without source disclosure, or any use that is incompatible with
+   AGPL-3.0, you must obtain a commercial license from the copyright
+   holder.
 
 Commercial License Terms
 ------------------------
 
 Under this license, you may NOT:
 
-  - Use, copy, modify, or distribute the NexusKey Engine source code
+  - Use, copy, modify, or distribute the VKey Engine source code
     (or substantial portions of it) in proprietary software without
     a written license agreement from the copyright holder.
 
@@ -29,7 +31,7 @@ Under this license, you may NOT:
   - Redistribute the Engine as part of a competing input method editor
     without explicit permission.
 
-To obtain a commercial license, contact: phatmt@nexuskey.dev
+To obtain a commercial license, contact: phatmt@vkey.dev
 
 Scope
 -----
@@ -46,4 +48,4 @@ This commercial license applies to the following components:
   - src/core/engine/EngineFactory.h, EngineFactory.cpp
   - src/core/engine/CodeTableConverter.h, CodeTableConverter.cpp
 
-All other files in the NexusKey project remain under GPL-3.0-only.
+All other files in the VKey project remain under AGPL-3.0-only.

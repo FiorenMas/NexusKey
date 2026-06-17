@@ -1,5 +1,5 @@
-// NexusKey - Macro Table Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Macro Table Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "MacroTableDialog.h"
 #include "DialogUtils.h"
@@ -18,7 +18,7 @@ namespace NextKey {
 MacroTableDialog::MacroTableDialog(HWND parent)
     : SciterSubDialog({
         L"this://app/macro/macro.html",
-        L"NexusKey - Macro Table",
+        L"VKey - Macro Table",
         420, 600, parent, true, 36, 40, true
     }) {
     macros_ = ConfigManager::LoadMacros(ConfigManager::GetConfigPath());
@@ -170,28 +170,21 @@ void MacroTableDialog::importMacros() {
     std::ifstream infile(path);
     if (!infile.is_open()) return;
 
-    std::string line;
-    bool firstLine = true;
-    while (std::getline(infile, line)) {
-        // Skip header/comment lines
-        if (firstLine) { firstLine = false; if (!line.empty() && line[0] == ';') continue; }
-        if (line.empty() || line[0] == ';') continue;
-
-        // Split on first ':'
+    ParseConfigLines(infile, [&](const std::string& line) {
+        // Split on first ':' (key:value format).
         auto pos = line.find(':');
-        if (pos == std::string::npos || pos == 0) continue;
+        if (pos == std::string::npos || pos == 0) return;
 
         std::string key = line.substr(0, pos);
         std::string value = line.substr(pos + 1);
-        if (value.empty()) continue;
+        if (value.empty()) return;
 
-        // Convert UTF-8 to wstring
         std::wstring wKey = Utf8ToWide(key);
         std::wstring wVal = Utf8ToWide(value);
-        if (wKey.empty() || wVal.empty()) continue;
+        if (wKey.empty() || wVal.empty()) return;
 
         macros_[wKey] = wVal;
-    }
+    });
 
     populateList();
     persistAndSignal();
@@ -202,7 +195,7 @@ void MacroTableDialog::exportMacros() {
         get_hwnd(),
         L"Text file (*.txt)\0*.txt\0",
         L"txt",
-        L"NexusKeyMacro"
+        L"VKeyMacro"
     );
     if (path.empty()) return;
 

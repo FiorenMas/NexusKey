@@ -1,5 +1,5 @@
-// NexusKey - Spell Check Exclusions Dialog Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Spell Check Exclusions Dialog Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

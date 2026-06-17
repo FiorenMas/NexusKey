@@ -1,5 +1,5 @@
-// NexusKey - TSF Registration & Diagnostics
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Registration & Diagnostics
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Windows/COM headers MUST come first — <msctf.h> includes <comcat.h>
 // which requires COM base types from <ole2.h>/<objbase.h>
@@ -27,7 +27,7 @@ std::wstring GetTsfDllPath() {
     if (pos != std::wstring::npos) {
         path = path.substr(0, pos + 1);
     }
-    return path + L"NextKeyTSF.dll";
+    return path + L"VKeyTSF.dll";
 }
 
 bool IsTsfRegistered() {
@@ -156,7 +156,7 @@ void RunDiagnostics() {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     std::wstring out;
-    out += L"=== NexusKey Diagnostics ===\n\n";
+    out += L"=== VKey Diagnostics ===\n\n";
 
     // 1. TSF Registration check
     out += IsTsfRegistered() ? L"[OK] TSF registered\n" : L"[FAIL] TSF NOT registered\n";
@@ -204,69 +204,71 @@ void RunDiagnostics() {
 
     // 5. TSF Active Profile
     // RAII guard for COM pointers (ATL/CComPtr not available in EXE build)
-    auto comRelease = [](IUnknown* p) { if (p) p->Release(); };
+    {
+        auto comRelease = [](IUnknown* p) { if (p) p->Release(); };
 
-    out += L"\n--- TSF Active Profile ---\n";
-    ITfInputProcessorProfileMgr* pProfileMgrRaw = nullptr;
-    HRESULT hr = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfileMgr,
-        reinterpret_cast<void**>(&pProfileMgrRaw));
-    std::unique_ptr<ITfInputProcessorProfileMgr, decltype(comRelease)>
-        pProfileMgr(SUCCEEDED(hr) ? pProfileMgrRaw : nullptr, comRelease);
+        out += L"\n--- TSF Active Profile ---\n";
+        ITfInputProcessorProfileMgr* pProfileMgrRaw = nullptr;
+        HRESULT hr = CoCreateInstance(
+            CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfInputProcessorProfileMgr,
+            reinterpret_cast<void**>(&pProfileMgrRaw));
+        std::unique_ptr<ITfInputProcessorProfileMgr, decltype(comRelease)>
+            pProfileMgr(SUCCEEDED(hr) ? pProfileMgrRaw : nullptr, comRelease);
 
-    if (pProfileMgr) {
-        TF_INPUTPROCESSORPROFILE activeProfile = {};
-        hr = pProfileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &activeProfile);
-        if (SUCCEEDED(hr)) {
-            wchar_t buf[256];
-            swprintf_s(buf, L"  Type=%lu  LangID=0x%04X  HKL=0x%08IX\n",
-                        activeProfile.dwProfileType, activeProfile.langid,
-                        reinterpret_cast<DWORD_PTR>(activeProfile.hkl));
-            out += buf;
+        if (pProfileMgr) {
+            TF_INPUTPROCESSORPROFILE activeProfile = {};
+            hr = pProfileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &activeProfile);
+            if (SUCCEEDED(hr)) {
+                wchar_t buf[256];
+                swprintf_s(buf, L"  Type=%lu  LangID=0x%04X  HKL=0x%08IX\n",
+                            activeProfile.dwProfileType, activeProfile.langid,
+                            reinterpret_cast<DWORD_PTR>(activeProfile.hkl));
+                out += buf;
 
-            // Check CLSID
-            wchar_t clsidStr[64];
-            StringFromGUID2(activeProfile.clsid, clsidStr, 64);
-            out += L"  CLSID=";
-            out += clsidStr;
-            out += L"\n";
+                // Check CLSID
+                wchar_t clsidStr[64];
+                StringFromGUID2(activeProfile.clsid, clsidStr, 64);
+                out += L"  CLSID=";
+                out += clsidStr;
+                out += L"\n";
 
-            // NexusKey CLSID for comparison
-            static const GUID CLSID_NK = {
-                0xD84D1E5B, 0x8F2C, 0x4B1A,
-                {0x9D, 0x3E, 0x6F, 0x7A, 0x8B, 0x9C, 0x0D, 0x1E}
-            };
-            out += IsEqualCLSID(activeProfile.clsid, CLSID_NK)
-                ? L"  → This IS NexusKey\n"
-                : L"  → This is NOT NexusKey\n";
-        } else {
-            out += L"  GetActiveProfile failed\n";
-        }
-
-        // 6. Enumerate all profiles for 0x0409
-        out += L"\n--- All 0x0409 Profiles ---\n";
-        IEnumTfInputProcessorProfiles* pEnumRaw = nullptr;
-        hr = pProfileMgr->EnumProfiles(0x0409, &pEnumRaw);
-        std::unique_ptr<IEnumTfInputProcessorProfiles, decltype(comRelease)>
-            pEnum(SUCCEEDED(hr) ? pEnumRaw : nullptr, comRelease);
-
-        if (pEnum) {
-            TF_INPUTPROCESSORPROFILE profile;
-            ULONG fetched = 0;
-            int idx = 0;
-            while (pEnum->Next(1, &profile, &fetched) == S_OK && fetched == 1) {
-                wchar_t clsidStr2[64];
-                StringFromGUID2(profile.clsid, clsidStr2, 64);
-                wchar_t buf2[256];
-                swprintf_s(buf2, L"  [%d] type=%lu  hkl=0x%08IX  clsid=%s\n",
-                            idx++, profile.dwProfileType,
-                            reinterpret_cast<DWORD_PTR>(profile.hkl), clsidStr2);
-                out += buf2;
+                // VKey CLSID for comparison
+                static const GUID CLSID_NK = {
+                    0xDEB18BD1, 0x2331, 0x4F2A,
+                    {0xB0, 0x30, 0xDA, 0x9E, 0xB0, 0x09, 0x36, 0x83}
+                };
+                out += IsEqualCLSID(activeProfile.clsid, CLSID_NK)
+                    ? L"  → This IS VKey\n"
+                    : L"  → This is NOT VKey\n";
+            } else {
+                out += L"  GetActiveProfile failed\n";
             }
+
+            // 6. Enumerate all profiles for 0x0409
+            out += L"\n--- All 0x0409 Profiles ---\n";
+            IEnumTfInputProcessorProfiles* pEnumRaw = nullptr;
+            hr = pProfileMgr->EnumProfiles(0x0409, &pEnumRaw);
+            std::unique_ptr<IEnumTfInputProcessorProfiles, decltype(comRelease)>
+                pEnum(SUCCEEDED(hr) ? pEnumRaw : nullptr, comRelease);
+
+            if (pEnum) {
+                TF_INPUTPROCESSORPROFILE profile;
+                ULONG fetched = 0;
+                int idx = 0;
+                while (pEnum->Next(1, &profile, &fetched) == S_OK && fetched == 1) {
+                    wchar_t clsidStr2[64];
+                    StringFromGUID2(profile.clsid, clsidStr2, 64);
+                    wchar_t buf2[256];
+                    swprintf_s(buf2, L"  [%d] type=%lu  hkl=0x%08IX  clsid=%s\n",
+                                idx++, profile.dwProfileType,
+                                reinterpret_cast<DWORD_PTR>(profile.hkl), clsidStr2);
+                    out += buf2;
+                }
+            }
+        } else {
+            out += L"  Failed to create ITfInputProcessorProfileMgr\n";
         }
-    } else {
-        out += L"  Failed to create ITfInputProcessorProfileMgr\n";
     }
 
     // 7. SharedState check
@@ -294,19 +296,86 @@ void RunDiagnostics() {
     }
 
     CoUninitialize();
-    MessageBoxW(nullptr, out.c_str(), L"NexusKey Diagnostics", MB_OK | MB_ICONINFORMATION);
+    MessageBoxW(nullptr, out.c_str(), L"VKey Diagnostics", MB_OK | MB_ICONINFORMATION);
 }
 
 void CleanupHkcuClsidOverride() noexcept {
     wchar_t keyPath[256];
     swprintf_s(keyPath, L"Software\\Classes\\CLSID\\%s", NextKey::TSF::CLSID_TEXTSERVICE_STRING);
 
-    LSTATUS ls = RegDeleteTreeW(HKEY_CURRENT_USER, keyPath);
-    if (ls == ERROR_SUCCESS) {
-        NEXTKEY_LOG(L"[TsfRegistration] Removed HKCU CLSID override for NexusKey TSF");
-    } else if (ls != ERROR_FILE_NOT_FOUND) {
-        NEXTKEY_LOG(L"[TsfRegistration] Warning: could not remove HKCU CLSID override (error=%ld)", ls);
+    // Only clean up HKCU override if the TSF DLL is registered in HKLM
+    HKEY hKeyHklm = nullptr;
+    LSTATUS lsHklm = RegOpenKeyExW(HKEY_LOCAL_MACHINE, keyPath, 0, KEY_READ, &hKeyHklm);
+    if (lsHklm == ERROR_SUCCESS) {
+        RegCloseKey(hKeyHklm);
+
+        LSTATUS ls = RegDeleteTreeW(HKEY_CURRENT_USER, keyPath);
+        if (ls == ERROR_SUCCESS) {
+            NEXTKEY_LOG(L"[TsfRegistration] Removed HKCU CLSID override for VKey TSF");
+        } else if (ls != ERROR_FILE_NOT_FOUND) {
+            NEXTKEY_LOG(L"[TsfRegistration] Warning: could not remove HKCU CLSID override (error=%ld)", ls);
+        }
     }
+}
+
+bool ActivateVKeyTsfProfile() {
+    // RAII COM lifetime: pairs S_OK/S_FALSE with CoUninitialize and, crucially, does
+    // NOT call CoUninitialize when CoInitializeEx failed (e.g. RPC_E_CHANGED_MODE when
+    // the calling GUI thread was already initialized with a different apartment model).
+    // An unconditional CoUninitialize on the failure path would over-decrement and tear
+    // down COM on that thread. Declared first so it destructs LAST — after the COM
+    // interface unique_ptr below releases. Mirrors StartupHelper.h ComGuard.
+    struct ComGuard {
+        bool owned;
+        ComGuard() noexcept {
+            HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            owned = (hr == S_OK || hr == S_FALSE);
+        }
+        ~ComGuard() noexcept { if (owned) CoUninitialize(); }
+        ComGuard(const ComGuard&) = delete;
+        ComGuard& operator=(const ComGuard&) = delete;
+    } comGuard;
+
+    auto comRelease = [](IUnknown* p) { if (p) p->Release(); };
+
+    ITfInputProcessorProfileMgr* pProfileMgrRaw = nullptr;
+    HRESULT hr = CoCreateInstance(
+        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITfInputProcessorProfileMgr,
+        reinterpret_cast<void**>(&pProfileMgrRaw));
+
+    std::unique_ptr<ITfInputProcessorProfileMgr, decltype(comRelease)>
+        pProfileMgr(SUCCEEDED(hr) ? pProfileMgrRaw : nullptr, comRelease);
+
+    if (!pProfileMgr) {
+        NEXTKEY_LOG(L"[TsfRegistration] CoCreateInstance failed for ITfInputProcessorProfileMgr (hr=0x%08X)", hr);
+        return false;
+    }
+
+    static const GUID CLSID_NK = {
+        0xDEB18BD1, 0x2331, 0x4F2A,
+        {0xB0, 0x30, 0xDA, 0x9E, 0xB0, 0x09, 0x36, 0x83}
+    };
+    static const GUID GUID_NK_Profile = {
+        0x2FE17DA4, 0xD8E2, 0x4B28,
+        {0x85, 0x66, 0xC3, 0x0E, 0x8F, 0x04, 0xBF, 0xD4}
+    };
+
+    hr = pProfileMgr->ActivateProfile(
+        TF_PROFILETYPE_INPUTPROCESSOR,
+        0x0409,
+        CLSID_NK,
+        GUID_NK_Profile,
+        nullptr,
+        TF_IPPMF_FORSESSION
+    );
+
+    if (FAILED(hr)) {
+        NEXTKEY_LOG(L"[TsfRegistration] ActivateProfile failed for VKey TSF profile (hr=0x%08X)", hr);
+    }
+
+    // pProfileMgr (Release) then comGuard (CoUninitialize) destruct here, in that order.
+    return SUCCEEDED(hr);
 }
 
 }  // namespace NextKey

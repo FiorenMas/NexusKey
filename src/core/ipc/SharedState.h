@@ -1,11 +1,12 @@
-// NexusKey - SharedState Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - SharedState Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include "core/AutoCapDecision.h"
 #include "core/config/TypingConfig.h"
 
 namespace NextKey {
@@ -21,6 +22,16 @@ namespace SharedFlags {
     constexpr uint32_t TSF_ABI_MISMATCH       = 0x0020;  // DLL: mapped SharedState layout doesn't match this DLL
     constexpr uint32_t TSF_PENDING_DLL_SWAP   = 0x0040;  // EXE: startup swap failed, reboot needed
     constexpr uint32_t TSF_POST_UPDATE_REBOOT = 0x0080;  // EXE: swap succeeded, hosts may still hold old DLL
+    constexpr uint32_t TSF_TIP_ACTIVE         = 0x0100;  // DLL: VKey TIP is the active input processor (set on focus, cleared on deactivate/bg)
+}
+
+// Diagnostic flag bit definitions (uint8_t, byte slot at SharedState.diagFlags).
+// Distinct from featureFlags — diagnostics are off-by-default, dev-/debug-facing,
+// and live in a hidden TOML `[debug]` section (no settings-UI surface). Bit 0
+// is the Phase 1 per-stage perf histogram gate
+// (docs/plans/2026-05-19-architecture-review-design.md §Phase 1).
+namespace DiagFlags {
+    constexpr uint8_t PERF_HISTOGRAM = 0x01;
 }
 
 // Feature flag bit definitions (uint32_t packed into 3 bytes: featureFlags[2] + extFeatureFlags)
@@ -30,8 +41,9 @@ namespace FeatureFlags {
     constexpr uint16_t AUTO_CAPS            = 0x0002;
     constexpr uint16_t ALLOW_ZWJF           = 0x0004;
     constexpr uint16_t AUTO_RESTORE         = 0x0008;
-    constexpr uint16_t TEMP_OFF_SPELL_CTRL  = 0x0010;
-    constexpr uint16_t TEMP_OFF_BY_ALT      = 0x0040;
+    constexpr uint16_t CJK_AUTO_SWITCH      = 0x0010;  // Auto-toggle V/E on Chinese/Japanese/Korean keyboard layout
+    constexpr uint16_t ESC_RESTORE_RAW      = 0x0020;  // Esc restores raw keys (víu → virus) and ends composition
+    // Bit 0x0040 free (formerly TEMP_OFF_*; ToggleEnabled trigger now in HotkeyRegistry)
     constexpr uint16_t BEEP_ON_SWITCH      = 0x0080;
     // Byte 1 (bits 8-15)
     constexpr uint16_t MACRO_ENABLED        = 0x0100;
@@ -39,12 +51,15 @@ namespace FeatureFlags {
     constexpr uint16_t QUICK_CONSONANT      = 0x0400;
     constexpr uint16_t QUICK_START_CONSONANT = 0x0800;
     constexpr uint16_t QUICK_END_CONSONANT   = 0x1000;
-    constexpr uint16_t TEMP_OFF_MACRO_ESC    = 0x2000;
+    // Bit 0x2000 free (formerly TEMP_OFF_MACRO_ESC; SkipMacro trigger now lives
+    // in HotkeyRegistry, persisted to `[[hotkeys]]` + `[hotkey_state]`).
     constexpr uint16_t SMART_SWITCH          = 0x4000;
     constexpr uint16_t EXCLUDE_APPS          = 0x8000;
     // Extended flags (byte 2, bits 16-23) — stored in extFeatureFlags
     constexpr uint32_t AUTO_CAPS_MACRO       = 0x00010000;
     constexpr uint32_t ALLOW_ENGLISH_BYPASS  = 0x00020000;
+    constexpr uint32_t DEBUG_LOG_ENABLED     = 0x00040000;  // Settings → System → "Bật debug log"
+    constexpr uint32_t SUGGEST_KEEP_CHARS    = 0x00080000;  // Settings → Bảng gõ → "BS giữ chữ khi có gợi ý"
 }
 
 /// Document context anchor published by TSF (readonly mode) for HookEngine.
@@ -94,35 +109,28 @@ inline void DeriveAnchorFromPreceding(const uint16_t* preceding, size_t len,
     out.isWordStart = (last == u' ' || last == u'\t' ||
                        last == u'\n' || last == u'\r') ? 1 : 0;
 
-    // Walk back over spaces/tabs (not newlines — newline is its own trigger).
-    // Track whether any whitespace was skipped: sentence-start requires at least one
-    // space between '.?!' and the cursor, otherwise domains/extensions like ".com"
-    // get force-capped to ".Com".
-    size_t i = len;
-    bool skippedWhitespace = false;
-    while (i > 0) {
-        uint16_t c = preceding[i - 1];
-        if (c == u' ' || c == u'\t') { --i; skippedWhitespace = true; continue; }
-        break;
-    }
-
-    if (i == 0) {
-        // Buffer is only spaces/tabs. Conservative: sentence + line start both true.
-        // (Over-cap in pathological mid-doc whitespace runs is benign.)
-        out.isSentenceStart = 1;
-        out.isLineStart     = 1;
-    } else {
-        uint16_t prev = preceding[i - 1];
-        if (prev == u'\n' || prev == u'\r') {
+    // Sentence/line classification — single source of truth lives in
+    // core/AutoCapDecision.h and is shared with the TSF auto-cap path.
+    switch (ClassifyCapTrigger(preceding, len)) {
+        case CapTrigger::DocStart:
+            // Empty / whitespace-only buffer. Conservative: sentence + line
+            // start both true. (Over-cap in pathological mid-doc whitespace
+            // runs is benign.)
+            out.isSentenceStart = 1;
+            out.isLineStart     = 1;
+            break;
+        case CapTrigger::LineStart:
             out.isSentenceStart = 0;
             out.isLineStart     = 1;
-        } else if ((prev == u'.' || prev == u'?' || prev == u'!') && skippedWhitespace) {
+            break;
+        case CapTrigger::SentenceEnd:
             out.isSentenceStart = 1;
             out.isLineStart     = 0;
-        } else {
+            break;
+        case CapTrigger::None:
             out.isSentenceStart = 0;
             out.isLineStart     = 0;
-        }
+            break;
     }
 
     // currentSyllable: non-whitespace run ending at cursor. Meaningful only when
@@ -240,7 +248,7 @@ struct SharedState {
     uint32_t flags;           // Runtime flags (Vietnamese mode, engine enabled, etc.)
 
     // ── Config data (3 bytes) ──
-    uint8_t  inputMethod;     // 0=Telex, 1=VNI, 2=SimpleTelex
+    uint8_t  inputMethod;     // 0=Telex, 1=VNI, 2=SimpleTelex, 3=Combined, 4=UserDefined
     uint8_t  spellCheck;      // Spell check enabled
     uint8_t  optimizeLevel;   // Optimization level
 
@@ -264,7 +272,10 @@ struct SharedState {
     // HookEngine detects change during QuickSyncFromSharedState() and triggers full reload.
     // Replaces Named Event (ConfigEvent) — eliminates per-keystroke WaitForSingleObject syscall.
     uint8_t  configGeneration;   // Wraps at 255 — use != comparison, not >
-    uint8_t  reserved0;          // Padding to maintain alignment
+    uint8_t  diagFlags;          // Diagnostic toggles (see DiagFlags::). Reuses the
+                                 // tempOffMethod byte slot (v3 cleanup retired that
+                                 // trigger into HotkeyRegistry); zero-init means all
+                                 // diagnostics off by default — same ABI as before.
 
     // ── Reserved for future expansion (1024 bytes) ──
     // Draw from this pool for new fields; do NOT bump CURRENT_VERSION unless
@@ -298,10 +309,13 @@ struct SharedState {
     }
 
     // ── Hotkey encode/decode helpers ──
+    // VK_* codes only occupy the low byte (0x00-0xFE). Hi byte reserved for
+    // future extension; we keep the 16-bit layout to avoid changing the binary
+    // SharedState struct size.
     void SetHotkey(const HotkeyConfig& hk) noexcept {
         hotkeyMods = (hk.ctrl ? 1 : 0) | (hk.shift ? 2 : 0) | (hk.alt ? 4 : 0) | (hk.win ? 8 : 0);
-        hotkeyKeyLo = static_cast<uint8_t>(hk.key);
-        hotkeyKeyHi = static_cast<uint8_t>(hk.key >> 8);
+        hotkeyKeyLo = static_cast<uint8_t>(hk.vk);
+        hotkeyKeyHi = static_cast<uint8_t>(hk.vk >> 8);
     }
     [[nodiscard]] HotkeyConfig GetHotkey() const noexcept {
         HotkeyConfig hk;
@@ -309,7 +323,8 @@ struct SharedState {
         hk.shift = (hotkeyMods & 2) != 0;
         hk.alt   = (hotkeyMods & 4) != 0;
         hk.win   = (hotkeyMods & 8) != 0;
-        hk.key   = static_cast<wchar_t>(hotkeyKeyLo | (static_cast<uint16_t>(hotkeyKeyHi) << 8));
+        hk.vk    = static_cast<uint32_t>(hotkeyKeyLo)
+                 | (static_cast<uint32_t>(hotkeyKeyHi) << 8);
         return hk;
     }
     // Convert hotkey fields are reserved for future migration.
@@ -326,12 +341,12 @@ struct SharedState {
         inputMethod = 0;  // Telex
         spellCheck = 0;
         optimizeLevel = 0;
-        SetFeatureFlags(FeatureFlags::ALLOW_ZWJF);  // Default: tone keys enabled
+        SetFeatureFlags(FeatureFlags::ALLOW_ZWJF | FeatureFlags::MODERN_ORTHO);  // Default: tone keys enabled (CJK auto-switch opt-in)
         codeTable = 0;  // Unicode
         hotkeyMods = 0; hotkeyKeyLo = 0; hotkeyKeyHi = 0;
         convertMods = 0; convertKeyLo = 0; convertKeyHi = 0;
         configGeneration = 0;
-        reserved0 = 0;
+        diagFlags = 0;
         for (auto& b : reserved) b = 0;
         contextAnchor = HookContextAnchor{};  // zero all fields (generation=0=stable)
     }
@@ -339,7 +354,7 @@ struct SharedState {
 
 // Ensure SharedState layout is stable across EXE and DLL builds.
 // sizeof breakdown: 12 header + 4 epoch + 4 flags + 3 config + 3 featureFlags +
-// 1 codeTable + 6 hotkey + 2 configGen/reserved0 + 1024 reserved
+// 1 codeTable + 6 hotkey + 2 configGen/diagFlags + 1024 reserved
 //   = 1059 bytes, rounded up by 1 byte of alignment padding before contextAnchor
 //   (alignof >= 4) → contextAnchor at offset 1060 + 44 = 1104.
 static_assert(sizeof(SharedState) == 1104, "SharedState size changed — update structVersion");
@@ -373,19 +388,20 @@ static_assert(offsetof(SharedState, contextAnchor) == 1060,
     if (config.autoCaps)           flags |= FeatureFlags::AUTO_CAPS;
     if (config.allowZwjf)          flags |= FeatureFlags::ALLOW_ZWJF;
     if (config.autoRestoreEnabled) flags |= FeatureFlags::AUTO_RESTORE;
-    // Bit 0x0010 (TEMP_OFF_SPELL_CTRL) removed — now using spell exclusion list
-    if (config.tempOffByAlt)       flags |= FeatureFlags::TEMP_OFF_BY_ALT;
+    if (config.cjkAutoSwitch)      flags |= FeatureFlags::CJK_AUTO_SWITCH;
+    if (config.escRestoreRawEnabled) flags |= FeatureFlags::ESC_RESTORE_RAW;
     if (config.beepOnSwitch)       flags |= FeatureFlags::BEEP_ON_SWITCH;
     if (config.macroEnabled)       flags |= FeatureFlags::MACRO_ENABLED;
     if (config.macroInEnglish)     flags |= FeatureFlags::MACRO_IN_ENGLISH;
     if (config.quickConsonant)     flags |= FeatureFlags::QUICK_CONSONANT;
     if (config.quickStartConsonant) flags |= FeatureFlags::QUICK_START_CONSONANT;
     if (config.quickEndConsonant)   flags |= FeatureFlags::QUICK_END_CONSONANT;
-    if (config.tempOffMacroByEsc)   flags |= FeatureFlags::TEMP_OFF_MACRO_ESC;
     if (config.smartSwitch)         flags |= FeatureFlags::SMART_SWITCH;
     if (config.excludeApps)         flags |= FeatureFlags::EXCLUDE_APPS;
     if (config.autoCapsMacro)       flags |= FeatureFlags::AUTO_CAPS_MACRO;
     if (config.allowEnglishBypass)  flags |= FeatureFlags::ALLOW_ENGLISH_BYPASS;
+    if (config.debugLogEnabled)     flags |= FeatureFlags::DEBUG_LOG_ENABLED;
+    if (config.suggestKeepChars)    flags |= FeatureFlags::SUGGEST_KEEP_CHARS;
     return flags;
 }
 
@@ -395,19 +411,20 @@ inline void DecodeFeatureFlags(uint32_t flags, TypingConfig& config) noexcept {
     config.autoCaps           = (flags & FeatureFlags::AUTO_CAPS) != 0;
     config.allowZwjf          = (flags & FeatureFlags::ALLOW_ZWJF) != 0;
     config.autoRestoreEnabled = (flags & FeatureFlags::AUTO_RESTORE) != 0;
-    // Bit 0x0010 (TEMP_OFF_SPELL_CTRL) removed — now using spell exclusion list
-    config.tempOffByAlt       = (flags & FeatureFlags::TEMP_OFF_BY_ALT) != 0;
+    config.cjkAutoSwitch      = (flags & FeatureFlags::CJK_AUTO_SWITCH) != 0;
+    config.escRestoreRawEnabled = (flags & FeatureFlags::ESC_RESTORE_RAW) != 0;
     config.beepOnSwitch       = (flags & FeatureFlags::BEEP_ON_SWITCH) != 0;
     config.macroEnabled       = (flags & FeatureFlags::MACRO_ENABLED) != 0;
     config.macroInEnglish     = (flags & FeatureFlags::MACRO_IN_ENGLISH) != 0;
     config.quickConsonant     = (flags & FeatureFlags::QUICK_CONSONANT) != 0;
     config.quickStartConsonant = (flags & FeatureFlags::QUICK_START_CONSONANT) != 0;
     config.quickEndConsonant   = (flags & FeatureFlags::QUICK_END_CONSONANT) != 0;
-    config.tempOffMacroByEsc   = (flags & FeatureFlags::TEMP_OFF_MACRO_ESC) != 0;
     config.smartSwitch         = (flags & FeatureFlags::SMART_SWITCH) != 0;
     config.excludeApps         = (flags & FeatureFlags::EXCLUDE_APPS) != 0;
     config.autoCapsMacro       = (flags & FeatureFlags::AUTO_CAPS_MACRO) != 0;
     config.allowEnglishBypass  = (flags & FeatureFlags::ALLOW_ENGLISH_BYPASS) != 0;
+    config.debugLogEnabled     = (flags & FeatureFlags::DEBUG_LOG_ENABLED) != 0;
+    config.suggestKeepChars    = (flags & FeatureFlags::SUGGEST_KEEP_CHARS) != 0;
 }
 
 }  // namespace NextKey

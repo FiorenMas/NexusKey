@@ -1,7 +1,7 @@
-// NexusKey - English Protection Module (Header-Only)
+// VKey - English Protection Module (Header-Only)
 // Copyright (c) 2024-2026 PhatMT. All rights reserved.
-// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-NexusKey-Commercial
-// Dual-licensed: GPL-3.0 for open-source use, commercial license for proprietary use.
+// SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-VKey-Commercial
+// Dual-licensed: AGPL-3.0 for open-source use, commercial license for proprietary use.
 // See LICENSE and LICENSE-COMMERCIAL in the project root.
 //
 // 3-Tier English Protection System:
@@ -74,7 +74,22 @@ struct EnglishProtectionState {
            (c0 == L's' && c1 == L'c') ||
            (c0 == L's' && c1 == L'k') ||
            (c0 == L's' && c1 == L'l') ||
-           (c0 == L'w' && c1 == L'r');
+           (c0 == L'w' && c1 == L'h') ||
+           (c0 == L'w' && c1 == L'r') ||
+           (c0 == L'k' && c1 == L'n') ||
+           (c0 == L'p' && c1 == L'n') ||
+           (c0 == L'p' && c1 == L's');
+}
+
+/// Raw-input variant: check the first two RAW keystrokes against the same
+/// impossible-Vietnamese start-cluster table. Needed because Telex P8 rewrites
+/// a leading standalone `w` to synthetic `ư` in states_ before CheckEnglishBias
+/// sees it — so `wh`/`wr` would slip past the states-based start check.
+/// rawInput_ holds keystrokes verbatim, so the cluster is still visible there.
+[[nodiscard]] inline bool IsHardEnglishRawStart(
+        const wchar_t* raw, size_t len) noexcept {
+    if (len < 2) return false;
+    return IsHardEnglishStart(raw[0], raw[1]);
 }
 
 /// Check if a consonant is impossible at the end of a Vietnamese word.
@@ -273,6 +288,13 @@ template<typename CharStateT>
         if (v0 == 2 && v1 == 1) continue;
         // Exception: y+a — part of the "uya" triphthong (khuya, đêm khuya, etc.)
         if (v0 == 5 && v1 == 0) continue;
+        // Exception: y+e — smart-accent intermediate for yê / uyê triphthong
+        // (yến, yêu, chuyện, nguyễn, tuyết, xuyến). Mirrors the i+e case:
+        // yê is the only Vietnamese nucleus that contains y+e, so a plain
+        // y+e in the buffer is an in-progress syllable, not English.
+        // Free-marking via a trailing 'e' later promotes e → ê and
+        // RelocateToneToTarget moves any tone onto the new ê.
+        if (v0 == 5 && v1 == 1) continue;
         if (kDiphthongClassic[v0][v1] == 0 && kDiphthongModern[v0][v1] == 0) {
             return true;
         }

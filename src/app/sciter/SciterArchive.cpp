@@ -1,5 +1,5 @@
-// NexusKey - Sciter Archive Resource Binding
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Sciter Archive Resource Binding
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // This file includes the packfolder-generated resources and provides
 // a single binding function. Only include resources.cpp here to avoid

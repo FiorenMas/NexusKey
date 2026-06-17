@@ -1,5 +1,5 @@
-// NexusKey - App Overrides Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - App Overrides Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "AppOverridesDialog.h"
 #include "helpers/AppHelpers.h"
@@ -12,7 +12,7 @@ namespace NextKey {
 AppOverridesDialog::AppOverridesDialog(HWND parent)
     : WindowPickerDialog({
         L"this://app/appoverrides/appoverrides.html",
-        L"NexusKey - App Overrides",
+        L"VKey - App Overrides",
         400, 460, parent, true, 36, 40, true
     }) {
     entries_ = ConfigManager::LoadAppOverrides(ConfigManager::GetConfigPath());
@@ -62,7 +62,8 @@ bool AppOverridesDialog::handle_event(HELEMENT he, BEHAVIOR_EVENT_PARAMS& params
                     if (!appName.empty()) {
                         int8_t enc = static_cast<int8_t>(readInt("#val-encoding-override", -1));
                         int8_t mth = static_cast<int8_t>(readInt("#val-input-method", -1));
-                        addEntry(appName, enc, mth);
+                        int8_t snd = static_cast<int8_t>(readInt("#val-send-method", -1));
+                        addEntry(appName, enc, mth, snd);
                     }
                 } else if (action == L"delete-app") {
                     if (!appName.empty()) {
@@ -103,16 +104,18 @@ void AppOverridesDialog::populateList() {
         call_function("addAppToList",
             sciter::value(name.c_str()),
             sciter::value(static_cast<int>(entry.inputMethod)),
-            sciter::value(static_cast<int>(entry.encodingOverride)));
+            sciter::value(static_cast<int>(entry.encodingOverride)),
+            sciter::value(static_cast<int>(entry.sendMethod)));
     }
     call_function("forceRefresh");
 }
 
-void AppOverridesDialog::addEntry(const std::wstring& name, int8_t encoding, int8_t inputMethod) {
+void AppOverridesDialog::addEntry(const std::wstring& name, int8_t encoding, int8_t inputMethod, int8_t sendMethod) {
     std::wstring lower = ToLowerAscii(name);
     AppOverrideEntry entry;
     entry.encodingOverride = encoding;
     entry.inputMethod = inputMethod;
+    entry.sendMethod = sendMethod;
 
     bool isUpdate = (entries_.find(lower) != entries_.end());
     entries_[lower] = entry;
@@ -123,7 +126,8 @@ void AppOverridesDialog::addEntry(const std::wstring& name, int8_t encoding, int
     call_function("addAppToList",
         sciter::value(lower.c_str()),
         sciter::value(static_cast<int>(inputMethod)),
-        sciter::value(static_cast<int>(encoding)));
+        sciter::value(static_cast<int>(encoding)),
+        sciter::value(static_cast<int>(sendMethod)));
     call_function("clearInput");
     call_function("forceRefresh", sciter::value(true));
     persistAndSignal();

@@ -1,5 +1,5 @@
-// NexusKey - Input Scope Checker for TSF
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Input Scope Checker for TSF
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Checks if a TSF context should block Vietnamese input:
 // - GUID_COMPARTMENT_KEYBOARD_DISABLED compartment

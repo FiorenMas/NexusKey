@@ -1,17 +1,21 @@
-// NexusKey - Update Checker Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Update Checker Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "UpdateChecker.h"
 #include "UpdateSecurity.h"
+#include "CancelableBindStatusCallback.h"
 #include "core/Version.h"
 #include "core/Strings.h"
 #include "core/WinStrings.h"
 #include "core/CrashLog.h"
+#include "core/config/ConfigManager.h"
+#include "core/Debug.h"
 
 #include <ole2.h>
 #include <urlmon.h>
 #include <CommCtrl.h>
 #include <ShlObj.h>
+#include <Shlwapi.h>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -20,6 +24,7 @@
 #include <memory>
 
 #pragma comment(lib, "urlmon.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 namespace NextKey {
 
@@ -32,11 +37,43 @@ std::wstring GetTempFilePath(const wchar_t* filename) {
     return std::wstring(tempDir) + filename;
 }
 
+/// Compact a filesystem path for display, delegating to the Win32 API
+/// which handles UNC, long, and drive-letter paths correctly.
+std::wstring CompactPath(const std::wstring& path, UINT maxChars) {
+    std::wstring buf(maxChars + 1, L'\0');
+    if (PathCompactPathExW(buf.data(), path.c_str(), maxChars + 1, 0)) {
+        buf.resize(wcslen(buf.c_str()));
+        return buf;
+    }
+    return path;  // API failed — return original
+}
+
+HRESULT ShowTopmostTaskDialog(HWND parent, PCWSTR title, PCWSTR mainInstruction, PCWSTR content, TASKDIALOG_COMMON_BUTTON_FLAGS buttons, PCWSTR icon) {
+    TASKDIALOGCONFIG tdc = {};
+    tdc.cbSize = sizeof(tdc);
+    tdc.hwndParent = parent;
+    tdc.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
+    tdc.pszWindowTitle = title;
+    tdc.pszMainInstruction = mainInstruction;
+    tdc.pszContent = content;
+    tdc.dwCommonButtons = buttons;
+    tdc.pszMainIcon = icon;
+    tdc.pfCallback = [](HWND hwnd, UINT notification, WPARAM, LPARAM, LONG_PTR) -> HRESULT {
+        if (notification == TDN_CREATED) {
+            SetForegroundWindow(hwnd);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        }
+        return S_OK;
+    };
+    return TaskDialogIndirect(&tdc, nullptr, nullptr, nullptr);
+}
+
 }  // namespace
+
 
 std::string UpdateChecker::DownloadToString(const std::wstring& url) noexcept {
     try {
-        std::wstring tempFile = GetTempFilePath(L"nexuskey_update_check.tmp");
+        std::wstring tempFile = GetTempFilePath(L"vkey_update_check.tmp");
 
         // URLDownloadToFileW is the simplest WinAPI HTTP download
         HRESULT hr = URLDownloadToFileW(nullptr, url.c_str(), tempFile.c_str(), 0, nullptr);
@@ -157,7 +194,7 @@ UpdateInfo UpdateChecker::CheckForUpdate() noexcept {
 
         std::wstring version = Utf8ToWide(tagName);
         uint32_t remoteVersion = ParseVersion(version);
-        uint32_t localVersion = NEXUSKEY_VERSION_PACKED;
+        uint32_t localVersion = VKEY_VERSION_PACKED;
 
         info.checkSucceeded = true;  // API call worked
 
@@ -167,19 +204,10 @@ UpdateInfo UpdateChecker::CheckForUpdate() noexcept {
         std::string htmlUrl = ExtractJsonString(response, "html_url");
 
         // Find release asset
-#ifdef NEXUSKEY_LITE_MODE
-        std::string assetUrl = FindAssetUrl(response, "NexusKeyClassic.zip");
+#ifdef VKEY_LITE_MODE
+        std::string assetUrl = FindAssetUrl(response, "VKeyClassic.zip");
 #else
-        std::string assetUrl = FindAssetUrl(response, "NexusKey.zip");
-
-        // Fallback: old asset names for releases before v2.1.4
-        if (assetUrl.empty()) {
-#ifdef _WIN64
-            assetUrl = FindAssetUrl(response, "NextKey-x64.zip");
-#else
-            assetUrl = FindAssetUrl(response, "NextKey-x86.zip");
-#endif
-        }
+        std::string assetUrl = FindAssetUrl(response, "VKey.zip");
 #endif
 
         if (assetUrl.empty()) return info;
@@ -205,8 +233,9 @@ UpdateInfo UpdateChecker::CheckForUpdate() noexcept {
     return info;
 }
 
-bool UpdateChecker::DownloadFile(const std::wstring& url, const std::wstring& localPath) noexcept {
-    HRESULT hr = URLDownloadToFileW(nullptr, url.c_str(), localPath.c_str(), 0, nullptr);
+bool UpdateChecker::DownloadFile(const std::wstring& url, const std::wstring& localPath, std::atomic<bool>& cancelFlag) noexcept {
+    CancelableBindStatusCallback callback(cancelFlag);
+    HRESULT hr = URLDownloadToFileW(nullptr, url.c_str(), localPath.c_str(), 0, &callback);
     return SUCCEEDED(hr);
 }
 
@@ -229,7 +258,7 @@ bool UpdateChecker::ShowUpdateDialog(HWND parent, const UpdateInfo& info) {
     tdc.cbSize = sizeof(tdc);
     tdc.hwndParent = parent;
     tdc.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_USE_COMMAND_LINKS;
-    tdc.pszWindowTitle = L"NexusKey";
+    tdc.pszWindowTitle = L"VKey";
     tdc.pszMainIcon = TD_INFORMATION_ICON;
     tdc.pszMainInstruction = S(StringId::UPDATE_AVAILABLE_TITLE);
     tdc.pszContent = content;
@@ -248,8 +277,12 @@ bool UpdateChecker::ShowUpdateDialog(HWND parent, const UpdateInfo& info) {
     tdc.nDefaultButton = 1001;
 
     // Hyperlink callback
-    tdc.pfCallback = [](HWND, UINT notification, WPARAM, LPARAM lParam, LONG_PTR) -> HRESULT {
-        if (notification == TDN_HYPERLINK_CLICKED) {
+    tdc.pfCallback = [](HWND hwnd, UINT notification, WPARAM, LPARAM lParam, LONG_PTR) -> HRESULT {
+        if (notification == TDN_CREATED) {
+            SetForegroundWindow(hwnd);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        }
+        else if (notification == TDN_HYPERLINK_CLICKED) {
             ShellExecuteW(nullptr, L"open", reinterpret_cast<LPCWSTR>(lParam), nullptr, nullptr, SW_SHOW);
         }
         return S_OK;
@@ -263,12 +296,12 @@ bool UpdateChecker::ShowUpdateDialog(HWND parent, const UpdateInfo& info) {
 }
 
 void UpdateChecker::ShowUpToDateMessage(HWND parent) {
-    TaskDialog(parent, nullptr, L"NexusKey", S(StringId::UPDATE_TITLE),
+    TaskDialog(parent, nullptr, L"VKey", S(StringId::UPDATE_TITLE),
                S(StringId::UPDATE_LATEST), TDCBF_OK_BUTTON, TD_INFORMATION_ICON, nullptr);
 }
 
 void UpdateChecker::ShowCheckFailedMessage(HWND parent) {
-    TaskDialog(parent, nullptr, L"NexusKey", S(StringId::UPDATE_TITLE),
+    TaskDialog(parent, nullptr, L"VKey", S(StringId::UPDATE_TITLE),
                S(StringId::UPDATE_FAILED), TDCBF_OK_BUTTON, TD_WARNING_ICON, nullptr);
 }
 
@@ -281,7 +314,7 @@ bool UpdateChecker::ShowProgressDialog(HWND parent, const wchar_t* message,
     tdc.cbSize = sizeof(tdc);
     tdc.hwndParent = parent;
     tdc.dwFlags = TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CALLBACK_TIMER;
-    tdc.pszWindowTitle = L"NexusKey";
+    tdc.pszWindowTitle = L"VKey";
     tdc.pszMainInstruction = message;
     tdc.dwCommonButtons = TDCBF_CANCEL_BUTTON;
     tdc.lpCallbackData = reinterpret_cast<LONG_PTR>(&ctx);
@@ -291,6 +324,8 @@ bool UpdateChecker::ShowProgressDialog(HWND parent, const wchar_t* message,
         if (notification == TDN_CREATED) {
             SendMessageW(hwnd, TDM_SET_MARQUEE_PROGRESS_BAR, TRUE, 0);
             SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 30);
+            SetForegroundWindow(hwnd);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
         }
         if (notification == TDN_TIMER) {
             if (c->done.load(std::memory_order_acquire)) {
@@ -308,6 +343,7 @@ bool UpdateChecker::ShowProgressDialog(HWND parent, const wchar_t* message,
 bool UpdateChecker::DownloadWithProgress(HWND parent, const std::wstring& downloadUrl) {
     struct State {
         std::atomic<bool> done{false};
+        std::atomic<bool> cancel{false};
         bool success = false;
     };
     auto state = std::make_shared<State>();
@@ -315,7 +351,7 @@ bool UpdateChecker::DownloadWithProgress(HWND parent, const std::wstring& downlo
     std::thread([state, downloadUrl]() {
         try {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            state->success = DownloadAndLaunchInstaller(downloadUrl);
+            state->success = DownloadAndLaunchInstaller(downloadUrl, state->cancel);
             CoUninitialize();
         } catch (const std::exception& e) {
             CrashLog(L"UpdateChecker::DownloadWithProgress::thread", e.what());
@@ -327,27 +363,72 @@ bool UpdateChecker::DownloadWithProgress(HWND parent, const std::wstring& downlo
 
     bool completed = ShowProgressDialog(parent, S(StringId::UPDATE_DOWNLOADING), state->done);
 
-    if (!completed) return false;  // User cancelled
+    if (!completed) {
+        state->cancel.store(true, std::memory_order_release);
+        return false;  // User cancelled
+    }
 
     if (!state->success) {
-        TaskDialog(parent, nullptr, L"NexusKey", S(StringId::UPDATE_TITLE),
-                   S(StringId::UPDATE_DOWNLOAD_FAILED), TDCBF_OK_BUTTON, TD_WARNING_ICON, nullptr);
+        if (!state->cancel.load(std::memory_order_acquire)) {
+            ShowTopmostTaskDialog(parent, L"VKey", S(StringId::UPDATE_TITLE),
+                                  S(StringId::UPDATE_DOWNLOAD_FAILED), TDCBF_OK_BUTTON, TD_WARNING_ICON);
+        }
         return false;
+    }
+
+    // Back up the current configuration file
+    std::wstring backupPath;
+    std::wstring activeConfig = ConfigManager::GetConfigPath();
+    DWORD attrs = GetFileAttributesW(activeConfig.c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        std::wstring primaryBackup = activeConfig + L".bak";
+        if (CopyFileW(activeConfig.c_str(), primaryBackup.c_str(), FALSE)) {
+            backupPath = primaryBackup;
+        } else {
+            std::wstring appDataDir = ConfigManager::GetAppDataDirectory();
+            CreateDirectoryW(appDataDir.c_str(), nullptr);  // ensure dir exists
+            std::wstring fallbackBackup = appDataDir + L"\\config.toml.bak";
+            if (CopyFileW(activeConfig.c_str(), fallbackBackup.c_str(), FALSE)) {
+                backupPath = fallbackBackup;
+            } else {
+                NEXTKEY_LOG(L"[Update] Failed to copy config to primary or fallback backup path");
+            }
+        }
+    }
+
+    if (!backupPath.empty()) {
+        wchar_t content[512] = {0};
+        std::wstring compacted = CompactPath(backupPath, 60);
+        swprintf_s(content, S(StringId::UPDATE_BACKUP_SUCCESS), compacted.c_str());
+        ShowTopmostTaskDialog(parent, L"VKey", S(StringId::UPDATE_TITLE),
+                              content, TDCBF_OK_BUTTON, TD_INFORMATION_ICON);
     }
 
     return true;
 }
 
-bool UpdateChecker::DownloadAndLaunchInstaller(const std::wstring& downloadUrl) noexcept {
+bool UpdateChecker::DownloadAndLaunchInstaller(const std::wstring& downloadUrl, std::atomic<bool>& cancelFlag) noexcept {
     try {
+        if (cancelFlag.load(std::memory_order_relaxed)) return false;
+
         wchar_t tempDir[MAX_PATH] = {};
         GetTempPathW(MAX_PATH, tempDir);
-        std::wstring zipPath = std::wstring(tempDir) + L"NexusKey_update.zip";
+        std::wstring zipPath = std::wstring(tempDir) + L"VKey_update.zip";
 
-        if (!DownloadFile(downloadUrl, zipPath)) return false;
+        if (!DownloadFile(downloadUrl, zipPath, cancelFlag)) return false;
+
+        if (cancelFlag.load(std::memory_order_relaxed)) {
+            DeleteFileW(zipPath.c_str());
+            return false;
+        }
 
         // SEC-001: Verify ZIP hash against .sha256 sidecar
-        if (!VerifyDownloadedZip(downloadUrl, zipPath)) {
+        if (!VerifyDownloadedZip(downloadUrl, zipPath, cancelFlag)) {
+            DeleteFileW(zipPath.c_str());
+            return false;
+        }
+
+        if (cancelFlag.load(std::memory_order_relaxed)) {
             DeleteFileW(zipPath.c_str());
             return false;
         }
@@ -369,7 +450,13 @@ bool UpdateChecker::DownloadAndLaunchInstaller(const std::wstring& downloadUrl) 
         // when the main process exits, preventing restart after update.
         if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
                             CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr, &si, &pi)) {
-            return false;
+            // Fallback: some restricted job objects do not allow breakaway.
+            // Launch without the flag to proceed with update, even if inside the same job.
+            ZeroMemory(&pi, sizeof(pi));
+            if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                                0, nullptr, nullptr, &si, &pi)) {
+                return false;
+            }
         }
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);

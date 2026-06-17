@@ -1,5 +1,5 @@
-// NexusKey - Vietnamese Dictionary Coverage Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Vietnamese Dictionary Coverage Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Data-driven tests covering common Vietnamese words.
 // Supplements existing scenario-based tests in TelexEngineTest.cpp.
@@ -26,6 +26,7 @@ protected:
         config_.inputMethod = InputMethod::Telex;
         config_.spellCheckEnabled = false;
         config_.optimizeLevel = 0;
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 

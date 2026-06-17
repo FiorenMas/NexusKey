@@ -1,8 +1,9 @@
-// NexusKey - Settings Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Settings Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SettingsDialog.h"
 #include "../resource.h"
+#include "helpers/AppHelpers.h"
 #include "system/StartupHelper.h"
 #include "system/SubprocessHelper.h"
 #include "system/TsfRegistration.h"
@@ -13,6 +14,7 @@
 #include "sciter/ScaleHelper.h"
 #include "sciter/SciterHelper.h"
 #include "system/DarkModeHelper.h"
+#include "system/DebugLogWarning.h"
 #include "core/config/ConfigManager.h"
 #include "core/Strings.h"
 #include "core/Debug.h"
@@ -111,7 +113,7 @@ SettingsDialog::SettingsDialog()
     // (Required for transparency/blur to work correctly)
     expand();
     // 4. Set title (icon is set at end of constructor after all Sciter calls)
-    SetWindowTextW(get_hwnd(), L"NexusKey Settings");
+    SetWindowTextW(get_hwnd(), L"VKey Settings");
 
     // 8. Subclass for window dragging and close
     SetWindowSubclass(get_hwnd(), SubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
@@ -151,16 +153,16 @@ SettingsDialog::SettingsDialog()
     // Without this, the background stays solid black instead of blurred/transparent.
     expand();
 
+    // Calculate actual dimensions before centering (handles Advanced Settings width)
+    recalcWindowSize();
+
     // 13. Finally, move the initialized, rendered, and themed window onscreen
     RECT rc;
     GetWindowRect(get_hwnd(), &rc);
-    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     int winWidth = rc.right - rc.left;
     int winHeight = rc.bottom - rc.top;
-    int x = (screenWidth - winWidth) / 2;
-    int y = (screenHeight - winHeight) / 2;
-    SetWindowPos(get_hwnd(), HWND_NOTOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    POINT pt = NextKey::GetCenteredPos(get_hwnd(), winWidth, winHeight);
+    SetWindowPos(get_hwnd(), HWND_NOTOPMOST, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
 
     // Force taskbar presence while DWM transitions are still disabled (avoids flicker)
     SciterHelper::ForceTaskbarPresence(get_hwnd(), IDI_APP);
@@ -193,14 +195,14 @@ LRESULT SettingsDialog::on_load_data(LPSCN_LOAD_DATA pnmld) {
         ::SciterDataReady(pnmld->hwnd, pnmld->uri, data.start, UINT(data.length));
         return LOAD_OK;
     }
-    OutputDebugStringW(L"NexusKey: Failed to load from archive: ");
+    OutputDebugStringW(L"VKey: Failed to load from archive: ");
     OutputDebugStringW(pnmld->uri);
     OutputDebugStringW(L"\n");
     return LOAD_DISCARD;
 #else
     // Debug: Load from file system
     if (uiBasePath_.empty()) {
-        OutputDebugStringW(L"NexusKey: UI base path not set\n");
+        OutputDebugStringW(L"VKey: UI base path not set\n");
         return LOAD_DISCARD;
     }
 
@@ -214,7 +216,7 @@ LRESULT SettingsDialog::on_load_data(LPSCN_LOAD_DATA pnmld) {
     HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) {
-        OutputDebugStringW(L"NexusKey: Failed to open: ");
+        OutputDebugStringW(L"VKey: Failed to open: ");
         OutputDebugStringW(filePath.c_str());
         OutputDebugStringW(L"\n");
         return LOAD_DISCARD;
@@ -276,7 +278,7 @@ LRESULT CALLBACK SettingsDialog::SubclassProc(
     // Handle V/E mode change notification from main process.
     // Coalesce rapid messages: update the flag immediately but defer the
     // DOM update so N rapid tray clicks produce one toggle repaint, not N.
-    if (msg == WM_NEXUSKEY_MODE_CHANGED) {
+    if (msg == WM_VKEY_MODE_CHANGED) {
         if (s_instance) {
             s_instance->vietnameseMode_ = (wParam != 0);
             if (!s_instance->modeSyncPending_) {
@@ -301,7 +303,7 @@ LRESULT CALLBACK SettingsDialog::SubclassProc(
     }
 
     // Handle config changed from tray menu — reload TOML and refresh UI
-    if (msg == WM_NEXUSKEY_CONFIG_CHANGED) {
+    if (msg == WM_VKEY_CONFIG_CHANGED) {
         if (s_instance) {
             s_instance->loadSettings();
             s_instance->initializeUI();
@@ -330,28 +332,38 @@ LRESULT CALLBACK SettingsDialog::SubclassProc(
     // Deferred: open excluded apps dialog as subprocess
     // (must be a separate process — Sciter SOM assertion fires if a sciter::window
     //  is destroyed while the Sciter runtime is still active in this process)
-    if (msg == WM_NEXUSKEY_OPEN_EXCLUDED) {
-        SpawnSubprocess(L"NexusKey - Excluded Apps", L"--excludedapps");
+    if (msg == WM_VKEY_OPEN_EXCLUDED) {
+        SpawnSubprocess(L"VKey - Excluded Apps", L"--excludedapps");
         return 0;
     }
 
-    if (msg == WM_NEXUSKEY_OPEN_TSFAPPS) {
-        SpawnSubprocess(L"NexusKey - TSF Apps", L"--tsfapps");
+    if (msg == WM_VKEY_OPEN_TSFAPPS) {
+        SpawnSubprocess(L"VKey - TSF Apps", L"--tsfapps");
         return 0;
     }
 
-    if (msg == WM_NEXUSKEY_OPEN_MACRO) {
-        SpawnSubprocess(L"NexusKey - Macro Table", L"--macro");
+    if (msg == WM_VKEY_OPEN_MACRO) {
+        SpawnSubprocess(L"VKey - Macro Table", L"--macro");
         return 0;
     }
 
-    if (msg == WM_NEXUSKEY_OPEN_APPOVERRIDES) {
-        SpawnSubprocess(L"NexusKey - App Overrides", L"--appoverrides");
+    if (msg == WM_VKEY_OPEN_APPOVERRIDES) {
+        SpawnSubprocess(L"VKey - App Overrides", L"--appoverrides");
         return 0;
     }
 
-    if (msg == WM_NEXUSKEY_OPEN_SPELLEXCL) {
-        SpawnSubprocess(L"NexusKey - Spell Exclusions", L"--spellexclusions");
+    if (msg == WM_VKEY_OPEN_SPELLEXCL) {
+        SpawnSubprocess(L"VKey - Spell Exclusions", L"--spellexclusions");
+        return 0;
+    }
+
+    if (msg == WM_VKEY_OPEN_USERDEFINED) {
+        SpawnSubprocess(L"VKey - User Defined Input", L"--userdefined");
+        return 0;
+    }
+
+    if (msg == WM_VKEY_OPEN_HOTKEYS) {
+        SpawnSubprocess(L"VKey - Phím tắt", L"--hotkeys");
         return 0;
     }
 
@@ -500,7 +512,7 @@ bool SettingsDialog::handle_event(HELEMENT he, BEHAVIOR_EVENT_PARAMS& params) {
         }
 
         // Handle dropdown changes
-        if (id == L"input-type" || id == L"bang-ma" || id == L"modern-icon" || id == L"startup-mode") {
+        if (id == L"input-type" || id == L"bang-ma" || id == L"modern-icon" || id == L"startup-mode" || id == L"temp-off-openkey") {
             sciter::value val = el.get_value();
             int intValue = 0;
             if (val.is_int()) intValue = val.get<int>();
@@ -520,6 +532,22 @@ bool SettingsDialog::handle_event(HELEMENT he, BEHAVIOR_EVENT_PARAMS& params) {
                 } else {
                     switchKeyChar_ = raw;
                 }
+
+                // Update hotkeyConfig_.vk immediately so saveSettings() and syncToSharedState() see it
+                if (switchKeyChar_.empty()) {
+                    hotkeyConfig_.vk = 0;
+                } else if (switchKeyChar_ == L" ") {
+                    hotkeyConfig_.vk = 0x20;  // VK_SPACE
+                } else {
+                    wchar_t c = switchKeyChar_[0];
+                    SHORT scan = VkKeyScanW(c);
+                    if (scan != -1) {
+                        hotkeyConfig_.vk = static_cast<uint32_t>(LOBYTE(scan));
+                    } else {
+                        hotkeyConfig_.vk = 0;
+                    }
+                }
+
                 saveSettings();
             }
             return true;
@@ -546,9 +574,9 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
         // V/E toggle: send to main process via cross-process message
         // CSS: checked=E (thumb right), unchecked=V (thumb left) — invert
         vietnameseMode_ = !value;
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
         if (trayWnd) {
-            PostMessageW(trayWnd, WM_NEXUSKEY_SET_MODE, vietnameseMode_ ? 1 : 0, 0);
+            PostMessageW(trayWnd, WM_VKEY_SET_MODE, vietnameseMode_ ? 1 : 0, 0);
         }
         return;  // V/E mode is not a persistent config setting
     }
@@ -576,11 +604,11 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
                 setToggleState(L"tsf-apps", false);
                 MessageBoxW(get_hwnd(),
                     L"Không thể đăng ký TSF.\nVui lòng chạy với quyền Administrator.",
-                    L"NexusKey", MB_OK | MB_ICONWARNING);
+                    L"VKey", MB_OK | MB_ICONWARNING);
                 return;  // Don't save broken state
             }
             MessageBoxW(get_hwnd(), S(StringId::TSF_REGISTER_SUCCESS),
-                L"NexusKey", MB_OK | MB_ICONINFORMATION);
+                L"VKey", MB_OK | MB_ICONINFORMATION);
         } else {
             if (IsTsfRegistered()) {
                 UnregisterTsf();
@@ -593,11 +621,11 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
                     config_.tsfApps = true;
                     setToggleState(L"tsf-apps", true);
                     MessageBoxW(get_hwnd(), S(StringId::TSF_UNREGISTER_FAILED),
-                        L"NexusKey", MB_OK | MB_ICONWARNING);
+                        L"VKey", MB_OK | MB_ICONWARNING);
                     return;  // Don't save broken state
                 }
                 MessageBoxW(get_hwnd(), S(StringId::TSF_UNREGISTER_SUCCESS),
-                    L"NexusKey", MB_OK | MB_ICONINFORMATION);
+                    L"VKey", MB_OK | MB_ICONINFORMATION);
             }
         }
     }
@@ -628,11 +656,26 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
     else if (id == L"restore-key") {
         config_.autoRestoreEnabled = value;
     }
+    else if (id == L"cjk-auto-switch") {
+        config_.cjkAutoSwitch = value;
+    }
+    else if (id == L"debug-log") {
+        // Security gate: confirm with user before enabling. Disabling needs
+        // no prompt — that always reduces exposure.
+        if (value && !config_.debugLogEnabled) {
+            bool englishUi = (systemConfig_.language == 1);
+            if (!::NextKey::ShowDebugLogWarning(get_hwnd(), englishUi)) {
+                setToggleState(L"debug-log", false);  // revert UI
+                return;
+            }
+        }
+        config_.debugLogEnabled = value;
+    }
     else if (id == L"allow-english-bypass") {
         config_.allowEnglishBypass = value;
     }
-    else if (id == L"temp-off-openkey") {
-        config_.tempOffByAlt = value;
+    else if (id == L"suggest-keep-chars") {
+        config_.suggestKeepChars = value;
     }
     else if (id == L"use-macro") {
         config_.macroEnabled = value;
@@ -648,9 +691,6 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
     }
     else if (id == L"quick-end") {
         config_.quickEndConsonant = value;
-    }
-    else if (id == L"temp-off-macro") {
-        config_.tempOffMacroByEsc = value;
     }
     else if (id == L"auto-caps-macro") {
         config_.autoCapsMacro = value;
@@ -696,9 +736,9 @@ void SettingsDialog::handleToggleChange(const std::wstring& id, bool value) {
         // Restart main process to apply elevation change.
         // Startup registration (Task Scheduler/Registry) is handled by
         // EnsureStartupRegistration() in the new instance — no double UAC.
-        HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+        HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
         if (trayWnd) {
-            PostMessageW(trayWnd, WM_NEXUSKEY_RESTART, 0, 0);
+            PostMessageW(trayWnd, WM_VKEY_RESTART, 0, 0);
         }
         return;
     }
@@ -785,7 +825,6 @@ void SettingsDialog::handleDropdownChange(const std::wstring& id, int value) {
         saveSystemSettings();
         return;  // System setting, not typing config
     }
-
     saveSettings();
     if (onSettingsChanged_) onSettingsChanged_();
 }
@@ -793,15 +832,15 @@ void SettingsDialog::handleDropdownChange(const std::wstring& id, int value) {
 void SettingsDialog::handleButtonClick(const std::wstring& id) {
     if (id == L"btn-excluded-apps") {
         // Defer dialog creation — creating a Sciter window inside handle_event causes reentrancy issues
-        PostMessage(get_hwnd(), WM_NEXUSKEY_OPEN_EXCLUDED, 0, 0);
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_EXCLUDED, 0, 0);
         return;
     }
     else if (id == L"btn-tsf-apps") {
-        PostMessage(get_hwnd(), WM_NEXUSKEY_OPEN_TSFAPPS, 0, 0);
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_TSFAPPS, 0, 0);
         return;
     }
     else if (id == L"btn-macro-table") {
-        PostMessage(get_hwnd(), WM_NEXUSKEY_OPEN_MACRO, 0, 0);
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_MACRO, 0, 0);
         return;
     }
     else if (id == L"btn-color-v") {
@@ -821,11 +860,19 @@ void SettingsDialog::handleButtonClick(const std::wstring& id) {
         return;
     }
     else if (id == L"btn-app-overrides") {
-        PostMessage(get_hwnd(), WM_NEXUSKEY_OPEN_APPOVERRIDES, 0, 0);
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_APPOVERRIDES, 0, 0);
         return;
     }
     else if (id == L"btn-spell-exclusions") {
-        PostMessage(get_hwnd(), WM_NEXUSKEY_OPEN_SPELLEXCL, 0, 0);
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_SPELLEXCL, 0, 0);
+        return;
+    }
+    else if (id == L"btn-userdefined") {
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_USERDEFINED, 0, 0);
+        return;
+    }
+    else if (id == L"btn-hotkeys") {
+        PostMessage(get_hwnd(), WM_VKEY_OPEN_HOTKEYS, 0, 0);
         return;
     }
     else if (id == L"btn-reset-settings") {
@@ -837,12 +884,29 @@ void SettingsDialog::handleButtonClick(const std::wstring& id) {
     }
     else if (id == L"btn-report-issue") {
         ShellExecuteW(nullptr, L"open",
-            L"https://github.com/phatMT97/NexusKey/issues",
+            L"https://github.com/phatMT97/VKey/issues",
             nullptr, nullptr, SW_SHOW);
         return;
     }
     else if (id == L"btn-open-log-folder") {
-        // TODO: Open log folder in explorer
+        // Resolve to the same folder the Logger writes to. If the user just
+        // enabled the toggle, Logger::GetCurrentLogFolder() returns the
+        // resolved path (probes install dir, falls back to %APPDATA%).
+        std::wstring folder = ::NextKey::Logger::GetCurrentLogFolder();
+        if (folder.empty()) {
+            wchar_t buf[MAX_PATH] = {0};
+            DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+            if (n > 0) {
+                std::wstring exePath(buf);
+                size_t slash = exePath.find_last_of(L"\\/");
+                if (slash != std::wstring::npos) folder = exePath.substr(0, slash);
+            }
+        }
+        if (!folder.empty()) {
+            ShellExecuteW(nullptr, L"open", folder.c_str(),
+                          nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        return;
     }
 }
 
@@ -879,7 +943,13 @@ void SettingsDialog::recalcWindowSize() {
     GetWindowRect(hwnd, &rc);
 
     sciter::dom::element rootEl = get_root();
-    double dpiScale = ScaleHelper::getDpiScale();
+
+    // Use per-window DPI (not system DPI) — critical for multi-monitor setups
+    // where primary and secondary monitors have different DPI scaling.
+    // GetDpiForSystem() returns the primary monitor's DPI, which is wrong when
+    // the window lives on a different monitor. GetDpiForWindow() returns the
+    // correct value for the monitor the HWND is currently on.
+    double dpiScale = ScaleHelper::getDpiScaleForWindow(hwnd);
 
     // Fixed widths (must match CSS)
     int COMPACT_WIDTH = static_cast<int>(BASE_WIDTH_COLLAPSED * dpiScale);
@@ -1013,15 +1083,19 @@ void SettingsDialog::initializeUI() {
     setToggleState(L"auto-caps", config_.autoCaps);
     setToggleState(L"allow-zwjf", config_.allowZwjf);
     setToggleState(L"restore-key", config_.autoRestoreEnabled);
+    setToggleState(L"cjk-auto-switch", config_.cjkAutoSwitch);
+    setToggleState(L"debug-log", config_.debugLogEnabled);
     setToggleState(L"allow-english-bypass", config_.allowEnglishBypass);
-    setToggleState(L"temp-off-openkey", config_.tempOffByAlt);
+    setToggleState(L"suggest-keep-chars", config_.suggestKeepChars);
     setToggleState(L"use-macro", config_.macroEnabled);
     setToggleState(L"macro-english", config_.macroInEnglish);
     setToggleState(L"quick-telex", config_.quickConsonant);
     setToggleState(L"quick-start", config_.quickStartConsonant);
     setToggleState(L"quick-end", config_.quickEndConsonant);
-    setToggleState(L"temp-off-macro", config_.tempOffMacroByEsc);
     setToggleState(L"auto-caps-macro", config_.autoCapsMacro);
+    // esc-restore-raw / temp-off-openkey / temp-off-macro toggles were removed
+    // when the unified Hotkey Rebind dialog took over their behavior. Per-intent
+    // enable now lives in HotkeyRegistry (hotkey_state TOML section).
 
     setToggleState(L"key-ctrl", hotkeyConfig_.ctrl);
     setToggleState(L"key-alt", hotkeyConfig_.alt);
@@ -1046,12 +1120,12 @@ void SettingsDialog::initializeUI() {
     {
         sciter::dom::element verSpan = root.find_first("#app-version-number");
         if (verSpan.is_valid()) {
-            verSpan.set_text(NEXUSKEY_VERSION_WSTR);
+            verSpan.set_text(VKEY_VERSION_WSTR);
         }
         // Also update title bar version
         sciter::dom::element titleText = root.find_first(".title-text");
         if (titleText.is_valid()) {
-            titleText.set_text(L"NexusKey v" NEXUSKEY_VERSION_WSTR);
+            titleText.set_text(L"VKey v" VKEY_VERSION_WSTR);
         }
     }
 
@@ -1221,9 +1295,30 @@ void SettingsDialog::loadSettings() {
     backgroundOpacity_ = uiConfig.backgroundOpacity;
     isPinned_ = uiConfig.pinned;
 
-    // Load hotkey config
+    // Load hotkey config. Single-char edit box; vk ↔ char round-trip via
+    // VkKeyScanW (save) and MapVirtualKeyW (load). Printable keys including
+    // OEM punctuation (` ~ ; , . [ ] \ ' / = -) are supported. F-row / arrows
+    // / non-printable VKs persisted in vk via TOML survive load but render
+    // blank — rebind via the unified Hotkeys dialog if needed.
     hotkeyConfig_ = ConfigManager::LoadHotkeyConfigOrDefault();
-    switchKeyChar_ = (hotkeyConfig_.key != 0) ? std::wstring(1, hotkeyConfig_.key) : L"";
+    {
+        uint32_t vk = hotkeyConfig_.vk;
+        if (vk == 0x20) {
+            switchKeyChar_ = L" ";
+        } else if (vk != 0) {
+            // Mask bit 15 to drop the dead-key flag on layouts where the
+            // char (vd. ` ~ ^) is a deadkey — without this the cast can
+            // produce a control-range wchar that renders as garbage.
+            wchar_t c = static_cast<wchar_t>(MapVirtualKeyW(vk, MAPVK_VK_TO_CHAR) & 0x7FFF);
+            if (c != 0) {
+                switchKeyChar_ = std::wstring(1, towupper(c));
+            } else {
+                switchKeyChar_ = L"";
+            }
+        } else {
+            switchKeyChar_ = L"";
+        }
+    }
 
     // Load system config
     systemConfig_ = ConfigManager::LoadSystemConfigOrDefault();
@@ -1261,11 +1356,27 @@ void SettingsDialog::syncToSharedState() {
 void SettingsDialog::saveToToml() {
     std::wstring path = ConfigManager::GetConfigPath();
     if (!ConfigManager::SaveToFile(path, config_)) {
-        OutputDebugStringW(L"NexusKey: Failed to save config file\n");
+        OutputDebugStringW(L"VKey: Failed to save config file\n");
     }
 
-    // Save hotkey config (sync switchKeyChar_ → hotkeyConfig_.key)
-    hotkeyConfig_.key = switchKeyChar_.empty() ? 0 : switchKeyChar_[0];
+    // Save hotkey config — belt-and-suspenders sync switchKeyChar_ → vk in
+    // case the textbox bypassed the live VALUE_CHANGED handler (paste / IME).
+    // Same VkKeyScanW rule as the handler; non-mappable chars drop to vk=0.
+    {
+        if (switchKeyChar_.empty()) {
+            hotkeyConfig_.vk = 0;
+        } else if (switchKeyChar_ == L" ") {
+            hotkeyConfig_.vk = 0x20;  // VK_SPACE
+        } else {
+            wchar_t c = switchKeyChar_[0];
+            SHORT scan = VkKeyScanW(c);
+            if (scan != -1) {
+                hotkeyConfig_.vk = static_cast<uint32_t>(LOBYTE(scan));
+            } else {
+                hotkeyConfig_.vk = 0;
+            }
+        }
+    }
     (void)ConfigManager::SaveHotkeyConfig(path, hotkeyConfig_);
 
     configDirty_ = false;
@@ -1296,22 +1407,22 @@ void SettingsDialog::saveUISettings() {
 
     std::wstring path = ConfigManager::GetConfigPath();
     if (!ConfigManager::SaveUIConfig(path, uiConfig)) {
-        OutputDebugStringW(L"NexusKey: Failed to save UI config\n");
+        OutputDebugStringW(L"VKey: Failed to save UI config\n");
     }
 }
 
 void SettingsDialog::saveSystemSettings() {
     std::wstring path = ConfigManager::GetConfigPath();
     if (!ConfigManager::SaveSystemConfig(path, systemConfig_)) {
-        OutputDebugStringW(L"NexusKey: Failed to save system config\n");
+        OutputDebugStringW(L"VKey: Failed to save system config\n");
     }
 }
 
 void SettingsDialog::notifyIconChanged() {
     // Notify main process to re-read icon config
-    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+    HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
     if (trayWnd) {
-        PostMessageW(trayWnd, WM_NEXUSKEY_ICON_CHANGED, 0, 0);
+        PostMessageW(trayWnd, WM_VKEY_ICON_CHANGED, 0, 0);
     }
 }
 
@@ -1420,7 +1531,7 @@ void SettingsDialog::startUpdate(const UpdateInfo& info) {
     if (!UpdateChecker::DownloadWithProgress(hwnd, info.downloadUrl)) return;
 
     // Success — signal main process to exit
-    HWND trayWnd = FindWindowW(L"NexusKeyTrayClass", nullptr);
+    HWND trayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
     if (trayWnd) {
         PostMessageW(trayWnd, WM_CLOSE, 0, 0);
     }

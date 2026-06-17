@@ -1,5 +1,5 @@
-// NexusKey - Display Attribute (No Visual Styling)
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Display Attribute (No Visual Styling)
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -43,7 +43,7 @@ public:
 
     IFACEMETHODIMP GetDescription(BSTR* pbstrDesc) override {
         if (pbstrDesc == nullptr) return E_INVALIDARG;
-        *pbstrDesc = SysAllocString(L"NexusKey Input");
+        *pbstrDesc = SysAllocString(L"VKey Input");
         return (*pbstrDesc != nullptr) ? S_OK : E_OUTOFMEMORY;
     }
 

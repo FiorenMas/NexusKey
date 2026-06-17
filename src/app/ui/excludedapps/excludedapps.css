@@ -33,8 +33,95 @@
     flex: 1;
 }
 
+.list-col-mode {
+    width: 56px;
+    text-align: center;
+}
+
 .list-col-action {
     width: 32px;
+}
+
+/* Per-app mode selector for the entry being added (E / V). */
+.mode-select {
+    width: 132px;
+    height: 28px;
+    line-height: 26px;
+    padding: 0 20px 0 8px;
+    font-size: 13px;
+    font-weight: 400;
+    box-shadow: inset 0 0 0 1px var(--border-input);
+    border-radius: 4px;
+    background: var(--bg-card-solid);
+    color: var(--text-primary);
+    cursor: pointer;
+    margin-right: 8px;
+    vertical-align: middle;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.mode-select:focus {
+    box-shadow: inset 0 0 0 1px var(--color-primary);
+    outline: none;
+}
+
+/* Action buttons alignment */
+.settings-card .button-row {
+    align-items: center;
+}
+
+.settings-card .button-row .btn-action {
+    height: 28px;
+    line-height: 28px;
+    padding: 0 12px;
+    vertical-align: middle;
+}
+
+/* Dropdown color coding */
+.mode-select.mode-e {
+    color: var(--color-primary) !important;
+}
+
+.mode-select.mode-v {
+    color: #d32f2f !important;
+}
+
+body.dark .mode-select.mode-v {
+    color: #f87171 !important;
+}
+
+.mode-select option[value="0"] {
+    color: var(--color-primary);
+}
+
+.mode-select option[value="1"] {
+    color: #d32f2f;
+}
+
+body.dark .mode-select option[value="1"] {
+    color: #f87171;
+}
+
+/* Clickable E/V badge on each row. */
+.app-item-mode {
+    width: 56px;
+    text-align: center;
+    cursor: pointer;
+}
+
+.app-item-mode.mode-e {
+    color: var(--color-primary);
+    font-weight: 700;
+}
+
+.app-item-mode.mode-v {
+    color: #d32f2f;
+    font-weight: 700;
+}
+
+body.dark .app-item-mode.mode-v {
+    color: #f87171;
 }
 
 /* Ensure scrollbar appears when content overflows */

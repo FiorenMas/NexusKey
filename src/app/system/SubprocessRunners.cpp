@@ -1,5 +1,5 @@
-// NexusKey - Subprocess Runner Functions
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Subprocess Runner Functions
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SubprocessRunners.h"
 #include "SubprocessHelper.h"
@@ -11,6 +11,8 @@
 #include "dialogs/AboutDialog.h"
 #include "dialogs/AppOverridesDialog.h"
 #include "dialogs/SpellExclusionsDialog.h"
+#include "dialogs/UserDefinedDialog.h"
+#include "dialogs/HotkeysDialog.h"
 #include "core/Debug.h"
 
 #include <Windows.h>
@@ -64,7 +66,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     ExcludedAppsDialog dialog(parent);
     dialog.Show();
 
@@ -77,7 +79,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     TsfAppsDialog dialog(parent);
     dialog.Show();
 
@@ -90,7 +92,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     MacroTableDialog dialog(parent);
     dialog.Show();
 
@@ -103,7 +105,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     ConvertToolDialog dialog(parent);
     dialog.Show();
 
@@ -116,7 +118,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     AboutDialog dialog(parent);
     dialog.Show();
 
@@ -129,7 +131,7 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     AppOverridesDialog dialog(parent);
     dialog.Show();
 
@@ -142,11 +144,37 @@ namespace NextKey {
 
     InitSciterSubprocess();
 
-    HWND parent = FindWindowW(nullptr, L"NexusKey Settings");
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
     SpellExclusionsDialog dialog(parent);
     dialog.Show();
 
     NEXTKEY_LOG(L"Spell exclusions subprocess exiting");
+    ExitProcess(0);
+}
+
+[[noreturn]] void RunUserDefinedSubprocess() {
+    NEXTKEY_LOG(L"Running user defined input subprocess");
+
+    InitSciterSubprocess();
+
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
+    UserDefinedDialog dialog(parent);
+    dialog.Show();
+
+    NEXTKEY_LOG(L"User defined input subprocess exiting");
+    ExitProcess(0);
+}
+
+[[noreturn]] void RunHotkeysSubprocess() {
+    NEXTKEY_LOG(L"Running hotkeys rebind subprocess");
+
+    InitSciterSubprocess();
+
+    HWND parent = FindWindowW(nullptr, L"VKey Settings");
+    HotkeysDialog dialog(parent);
+    dialog.Show();
+
+    NEXTKEY_LOG(L"Hotkeys subprocess exiting");
     ExitProcess(0);
 }
 

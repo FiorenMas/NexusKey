@@ -1,5 +1,5 @@
-// NexusKey - Lightweight Toast Notification
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Lightweight Toast Notification
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

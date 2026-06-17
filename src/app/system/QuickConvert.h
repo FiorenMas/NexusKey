@@ -1,5 +1,5 @@
-// NexusKey - Quick Convert (Hotkey-driven text conversion)
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Quick Convert (Hotkey-driven text conversion)
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -15,6 +15,7 @@ struct SelectionAnchor {
     DWORD start = 0;
     DWORD end = 0;
     bool valid = false;
+    bool hasControl = false; // Whether the control supports EM_GETSEL
 };
 
 /// Quick-convert engine: copy → convert → paste → re-select → toast.
@@ -29,15 +30,13 @@ public:
 
 private:
     // Clipboard operations
+    [[nodiscard]] static bool OpenClipboardWithRetry(int maxRetries = 5, int intervalMs = 10) noexcept;
     [[nodiscard]] static std::wstring ReadClipboard();
     static bool WriteClipboard(const std::wstring& text);
 
     // Simulate Ctrl+C / Ctrl+V via SendInput
     static void SimulateCopy();
     static void SimulatePaste();
-
-    // Wait for modifier keys to be released (prevent interference)
-    bool WaitForModifiersRelease(int maxWaitMs = 500);
 
     // Wait for clipboard to have Unicode text
     bool WaitForClipboardUnicode(int maxWaitMs, int checkIntervalMs = 10);

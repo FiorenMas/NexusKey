@@ -1,5 +1,5 @@
-// NexusKey - Readonly Context Provider Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Readonly Context Provider Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "ReadonlyContextProvider.h"

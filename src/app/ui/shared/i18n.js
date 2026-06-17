@@ -1,4 +1,4 @@
-// NexusKey - Internationalization Helper
+// VKey - Internationalization Helper
 // Vietnamese is the default (hardcoded in HTML). English strings are in strings.js.
 // On first call, harvests Vietnamese text from DOM into STRINGS.vi so we can
 // switch freely between languages without reloading.

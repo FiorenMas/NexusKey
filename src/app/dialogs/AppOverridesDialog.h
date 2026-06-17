@@ -1,5 +1,5 @@
-// NexusKey - App Overrides Dialog Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - App Overrides Dialog Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -23,7 +23,7 @@ protected:
 
 private:
     void populateList();
-    void addEntry(const std::wstring& name, int8_t encoding, int8_t inputMethod);
+    void addEntry(const std::wstring& name, int8_t encoding, int8_t inputMethod, int8_t sendMethod);
     void removeEntry(const std::wstring& name);
     void persistAndSignal();
 

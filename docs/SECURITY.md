@@ -1,6 +1,6 @@
 # Security Hardening
 
-NexusKey là bộ gõ chạy với quyền truy cập bàn phím — bảo mật được đặt ưu tiên cao trong thiết kế.
+VKey là bộ gõ chạy với quyền truy cập bàn phím — bảo mật được đặt ưu tiên cao trong thiết kế.
 
 ## Threat Model
 
@@ -12,7 +12,7 @@ IME cục bộ trên Windows cá nhân. Kẻ tấn công chính: phần mềm đ
 
 | Biện pháp | Mô tả |
 |-----------|-------|
-| **SHA-256 hash verification** | Mỗi bản cập nhật đi kèm file `.sha256`. Sau khi tải, NexusKey tính hash thực tế bằng Windows CNG (bcrypt) và so khớp trước khi giải nén |
+| **SHA-256 hash verification** | Mỗi bản cập nhật đi kèm file `.sha256`. Sau khi tải, VKey tính hash thực tế bằng Windows CNG (bcrypt) và so khớp trước khi giải nén |
 | **URL domain whitelist** | Chỉ chấp nhận tải từ `https://github.com/`, `https://objects.githubusercontent.com/`, `https://codeload.github.com/`. Từ chối HTTP và domain lạ |
 | **PowerShell command escaping** | Escape ký tự `'` trong đường dẫn trước khi truyền vào `Expand-Archive`, chống command injection |
 | **ZIP path validation** | Tham số `--install-update` chỉ chấp nhận file trong `%TEMP%`. Dùng `GetFullPathNameW()` để resolve path traversal (`..\..\evil.zip`) |
@@ -76,7 +76,7 @@ IME cục bộ trên Windows cá nhân. Kẻ tấn công chính: phần mềm đ
 
 | Biện pháp | Mô tả |
 |-----------|-------|
-| **Magic marker** | SendInput event gắn `NEXUSKEY_EXTRA_INFO = 0x4E4B` — ngăn hook xử lý lại phím do chính NexusKey tạo ra |
+| **Magic marker** | SendInput event gắn `VKEY_EXTRA_INFO = 0x4E4B` — ngăn hook xử lý lại phím do chính VKey tạo ra |
 | **Focus isolation** | Chuyển app → xóa buffer, commit/discard composition. Không leak keystroke qua ranh giới ứng dụng |
 | **Bounded buffers** | Input buffer có giới hạn, macro expansion bounded bởi config limits |
 

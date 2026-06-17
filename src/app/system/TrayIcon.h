@@ -1,5 +1,5 @@
-// NexusKey - System Tray Icon
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - System Tray Icon
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -35,12 +35,17 @@ enum class TrayMenuId : UINT {
     MacroTable = 1030,
     ConvertTool = 1031,
     QuickConvert = 1032,
-    // Input method submenu
+    // Input method submenu — IDs must stay contiguous; callback derives
+    // InputMethod via (id - InputTelex). Add new methods at the end.
     InputTelex = 1040,
     InputVNI = 1041,
     InputSimpleTelex = 1042,
+    InputCombined = 1043,
+    InputUserDefined = 1044,
     // Hybrid TSF update — restart prompt (only shown when any update flag is live)
     RestartWindows = 1050,
+    // Watchdog control (toggle — label switches based on TrayMenuState::watchdogEnabled)
+    ToggleWatchdog = 1060,
 };
 
 /// Callback type for tray events
@@ -55,8 +60,9 @@ struct TrayMenuState {
     bool spellCheck = false;
     bool smartSwitch = false;
     bool macroEnabled = false;
-    int inputMethod = 0;       // 0=Telex, 1=VNI, 2=SimpleTelex
+    int inputMethod = 0;       // 0=Telex, 1=VNI, 2=SimpleTelex, 3=Combined, 4=UserDefined
     CodeTable codeTable = CodeTable::Unicode;
+    bool watchdogEnabled = false;  // Auto-restart on crash (opt-in)
 };
 
 /// Callback to query current menu state (pull model — called when menu opens)
@@ -92,10 +98,10 @@ public:
     /// Set getter to query current state when right-click menu opens
     void SetMenuStateGetter(MenuStateGetter getter) noexcept { menuStateGetter_ = std::move(getter); }
 
-    /// Set callback when system config changes (WM_NEXUSKEY_ICON_CHANGED)
+    /// Set callback when system config changes (WM_VKEY_ICON_CHANGED)
     void SetIconConfigChangedCallback(std::function<void()> callback) noexcept { iconConfigChangedCallback_ = std::move(callback); }
 
-    /// Set callback when hook config changes (WM_NEXUSKEY_HOOK_RELOAD) — subprocess → main eager sync
+    /// Set callback when hook config changes (WM_VKEY_HOOK_RELOAD) — subprocess → main eager sync
     void SetHookReloadCallback(std::function<void()> callback) noexcept { hookReloadCallback_ = std::move(callback); }
 
     /// Non-owning pointer to the process-wide SharedStateManager. Used only to

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="vi" window-frame="transparent">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="ud.title">Kiểu gõ Tự định nghĩa</title>
+    <link rel="stylesheet" href="../shared/theme.css">
+    <link rel="stylesheet" href="../shared/base.css">
+    <link rel="stylesheet" href="../shared/subdialog.css">
+    <link rel="stylesheet" href="userdefined.css">
+    <script src="../shared/strings.js"></script>
+    <script src="../shared/i18n.js"></script>
+    <script src="../shared/utils.js"></script>
+    <script src="userdefined.js"></script>
+</head>
+
+<body>
+    <div class="container" id="main-container">
+        <!-- Title Bar -->
+        <div class="title-bar">
+            <span class="title-text" data-i18n="ud.title">Kiểu gõ Tự định nghĩa</span>
+            <button class="btn-close" id="btn-close" title="Đóng" data-i18n-title="close">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+                    fill="rgba(240,23,23,1)">
+                    <path
+                        d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 10.5858L9.17157 7.75736L7.75736 9.17157L10.5858 12L7.75736 14.8284L9.17157 16.2426L12 13.4142L14.8284 16.2426L16.2426 14.8284L13.4142 12L16.2426 9.17157L14.8284 7.75736L12 10.5858Z">
+                    </path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Main Content Section -->
+        <div class="content-section">
+            <!-- Input Card -->
+            <div class="settings-card">
+                <div class="setting-row">
+                    <span class="setting-label" data-i18n="ud.action">Hành động</span>
+                    <select class="setting-input" id="key-action">
+                        <optgroup label="Dấu thanh" data-i18n-label="ud.group_tone">
+                            <option value="ClearTone">Xoá dấu</option>
+                            <option value="ToneAcute">Dấu Sắc</option>
+                            <option value="ToneGrave">Dấu Huyền</option>
+                            <option value="ToneHook">Dấu Hỏi</option>
+                            <option value="ToneTilde">Dấu Ngã</option>
+                            <option value="ToneDot">Dấu Nặng</option>
+                        </optgroup>
+                        <optgroup label="Dấu mũ" data-i18n-label="ud.group_circumflex">
+                            <option value="VniCircumflex">Mũ chung (â,ê,ô)</option>
+                            <option value="CircumflexA">Mũ cho a → â</option>
+                            <option value="CircumflexE">Mũ cho e → ê</option>
+                            <option value="CircumflexO">Mũ cho o → ô</option>
+                        </optgroup>
+                        <optgroup label="Dấu móc / trăng" data-i18n-label="ud.group_horn">
+                            <option value="HornW">Móc chung (ă,ư,ơ)</option>
+                            <option value="HornInsertU">Móc cho u → ư</option>
+                            <option value="HornInsertO">Móc cho o → ơ</option>
+                            <option value="VniHorn">Móc chung VNI 7 → ư,ơ</option>
+                            <option value="VniBreve">Trăng cho a → ă</option>
+                            <option value="HornOrInsertU">Móc hoặc chữ ư</option>
+                            <option value="HornOrInsertUNoStart">Móc hoặc ư (trừ đầu từ)</option>
+                        </optgroup>
+                        <optgroup label="Dấu gạch" data-i18n-label="ud.group_stroke">
+                            <option value="StrokeD">Gạch d → đ</option>
+                            <option value="VniStroke">Gạch chung (VNI 9)</option>
+                        </optgroup>
+                        <optgroup label="Đặc biệt" data-i18n-label="ud.group_special">
+                            <option value="UndoAllMarks">Thoát bỏ dấu</option>
+                        </optgroup>
+                        <optgroup label="Chèn chữ trực tiếp" data-i18n-label="ud.group_insert">
+                            <option value="InsertABreve">Chữ ă</option>
+                            <option value="InsertABreveUpper">Chữ Ă</option>
+                            <option value="InsertACircumflex">Chữ â</option>
+                            <option value="InsertACircumflexUpper">Chữ Â</option>
+                            <option value="InsertDStroke">Chữ đ</option>
+                            <option value="InsertDStrokeUpper">Chữ Đ</option>
+                            <option value="InsertECircumflex">Chữ ê</option>
+                            <option value="InsertECircumflexUpper">Chữ Ê</option>
+                            <option value="InsertOCircumflex">Chữ ô</option>
+                            <option value="InsertOCircumflexUpper">Chữ Ô</option>
+                            <option value="InsertOHorn">Chữ ơ</option>
+                            <option value="InsertOHornUpper">Chữ Ơ</option>
+                            <option value="InsertUHorn">Chữ ư</option>
+                            <option value="InsertUHornUpper">Chữ Ư</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label" data-i18n="ud.key">Phím gõ</span>
+                    <input type="text" class="setting-input" id="key-name" placeholder="vd: s" maxlength="1">
+                </div>
+                <div class="button-row">
+                    <button class="btn-action btn-primary" id="btn-apply" data-i18n="ud.apply">Áp dụng</button>
+                    <button class="btn-action btn-danger" id="btn-clear" data-i18n="ud.clear_key">Xoá phím</button>
+                </div>
+            </div>
+
+            <!-- Templates Card -->
+            <div class="settings-card template-card">
+                <span class="setting-label" data-i18n="ud.templates">Nạp mẫu:</span>
+                <div class="button-row" style="margin-top: 8px;">
+                    <button class="btn-action btn-secondary" id="btn-load-telex" style="flex: 1;">Telex</button>
+                    <button class="btn-action btn-secondary" id="btn-load-vni" style="flex: 1;">VNI</button>
+                </div>
+            </div>
+
+            <!-- List Card -->
+            <div class="settings-card list-card">
+                <div class="list-header">
+                    <span class="list-col-key" data-i18n="ud.key">Phím</span>
+                    <span class="list-col-action" data-i18n="ud.action">Hành động</span>
+                </div>
+                <div class="keymap-list" id="keymap-list">
+                    <!-- Items inserted by C++ -->
+                </div>
+            </div>
+
+            <!-- Footer Buttons -->
+            <div class="button-row footer-row">
+                <button class="btn-action btn-secondary" id="btn-import" data-i18n="m.import">Nạp từ file...</button>
+                <button class="btn-action btn-secondary" id="btn-export" data-i18n="m.export">Xuất ra file...</button>
+            </div>
+        </div>
+
+        <!-- Hidden inputs for C++ -->
+        <input type="hidden" id="val-action" value="">
+        <input type="hidden" id="val-key" value="">
+        <input type="hidden" id="val-key-action" value="">
+    </div>
+</body>
+
+</html>

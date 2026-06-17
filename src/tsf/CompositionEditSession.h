@@ -1,11 +1,12 @@
-// NexusKey - Composition Edit Sessions
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Composition Edit Sessions
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
 #include "EditSession.h"
 #include "CompositionManager.h"
 #include "Define.h"
+#include "core/AutoCapDecision.h"
 #include "core/engine/IInputEngine.h"
 #include "core/engine/VietnameseTables.h"
 #include <algorithm>
@@ -309,23 +310,10 @@ public:
             }
         }
 
-        // Auto-cap check: skip trailing whitespace, check for sentence-ending punct.
-        // '.?!' requires at least one whitespace between punct and cursor so that
-        // domains/extensions glued to the period (".com", ".vn") are NOT capped.
-        size_t i = len;
-        bool skippedWhitespace = false;
-        while (i > 0 && (buf[i - 1] == L' ' || buf[i - 1] == L'\t')) {
-            --i;
-            skippedWhitespace = true;
-        }
-
-        if (i == 0) {
-            shouldAutoCap_ = true;
-        } else {
-            wchar_t c = buf[i - 1];
-            shouldAutoCap_ = (c == L'\n' || c == L'\r') ||
-                             ((c == L'.' || c == L'?' || c == L'!') && skippedWhitespace);
-        }
+        // Auto-cap rule extracted to core/AutoCapDecision.h for Linux GTest
+        // coverage (the buffer comes from a Win32 edit session here, but the
+        // decision is pure CPU work over a wchar_t span).
+        shouldAutoCap_ = ComputeShouldAutoCap(buf, len);
 
         return S_OK;
     }
@@ -466,6 +454,36 @@ private:
     std::wstring word_;
     CComPtr<ITfRange> pRange_;
     wchar_t ch_;
+};
+
+/// Edit session to check if the selection is non-empty (for autocomplete detection)
+class SelectionCheckEditSession : public EditSession {
+public:
+    SelectionCheckEditSession(ITfContext* pContext, bool* pHasSelection)
+        : EditSession(pContext), pHasSelection_(pHasSelection) {
+        if (pHasSelection_) *pHasSelection_ = false;
+    }
+
+    IFACEMETHODIMP DoEditSession(TfEditCookie ec) override {
+        if (pContext_ == nullptr || pHasSelection_ == nullptr) return E_FAIL;
+        *pHasSelection_ = false;
+
+        TF_SELECTION sel = {};
+        ULONG fetched = 0;
+        HRESULT hr = pContext_->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched);
+        if (SUCCEEDED(hr) && fetched == 1 && sel.range != nullptr) {
+            CComPtr<ITfRange> pSelRange;
+            pSelRange.Attach(sel.range);
+            BOOL isEmpty = FALSE;
+            if (SUCCEEDED(pSelRange->IsEmpty(ec, &isEmpty))) {
+                *pHasSelection_ = (isEmpty == FALSE);
+            }
+        }
+        return S_OK;
+    }
+
+private:
+    bool* pHasSelection_;
 };
 
 }  // namespace TSF

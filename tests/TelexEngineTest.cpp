@@ -1,5 +1,5 @@
-// NexusKey - TelexEngine Unit Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TelexEngine Unit Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 // Story 1.2: Comprehensive Telex transformation tests (50+ tests)
 
 #include <gtest/gtest.h>
@@ -18,6 +18,7 @@ protected:
         config_.inputMethod = InputMethod::Telex;
         config_.spellCheckEnabled = false;
         config_.optimizeLevel = 0;
+        config_.modernOrtho = false; // Tests here expect classic behavior by default
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -249,6 +250,71 @@ TEST_F(TelexEngineTest, Horn_UO_HPrefix_AutoUO_Completes) {
     // huown → hươn (first w gives huơ, n triggers AutoUO to complete ươ)
     TypeString(*engine_, L"huown");
     EXPECT_EQ(engine_->Peek(), L"hươn");
+}
+
+// --- D12.5: 3.3 chaos truongwf → trường (full uong + late w + tone) ---
+
+TEST_F(TelexEngineTest, D12_5_Truongwf_FullCodaThenWThenTone) {
+    // truongwf → trường
+    // Steps: t-r-u-o-n-g (= "truong"), then w should retro-horn uo→ươ
+    // making "trương", then f tone on second vowel (coda present) → "trường".
+    TypeString(*engine_, L"truongwf");
+    EXPECT_EQ(engine_->Peek(), L"trường");
+}
+
+TEST_F(TelexEngineTest, D12_5_Truongw_NoTone) {
+    // Intermediate state: truongw → trương (w retro-horns uo after full ng coda)
+    TypeString(*engine_, L"truongw");
+    EXPECT_EQ(engine_->Peek(), L"trương");
+}
+
+// --- Sprint 2 D0: 5.3 Chrome bug — engine-layer isolation test ---
+//
+// Repro for chaos 5.3 "vieejt nam BS×4 s" → expected "viết" but Chrome
+// produces "việts". Per Sprint 2 D0 hook-log analysis, the failure is
+// in HookEngine's commit-undo "Primed → cancel on synthPending" state
+// machine: under chaos 1ms inter-key, 's' arrives before the BS#4 synth
+// events drain → Primed canceled → engine never gets "việt" replayed →
+// 's' processed fresh → screen shows "việts".
+//
+// This test ISOLATES the engine layer: pushes the equivalent post-replay
+// sequence ("viejt" then "s") directly. No hook, no commit, no synthetic
+// events.
+//
+//   PASS → engine is clean. Bug is purely in HookEngine commit-undo
+//          replay. Sprint 2 fix lives in HookEngine, not TypingEngine.
+//   FAIL → engine itself can't do the tone replacement. Fix needed in
+//          TypingEngine tone-replacement logic.
+//
+// Reference: docs/baselines/perf-baseline-d12-chrome-cross-app.md
+// HookEngine state-machine site: HookEngine.cpp "commit-undo: cancel Primed"
+
+TEST_F(TelexEngineTest, S2D0_ChromeBug53_VieejtPlusS_ToneReplace) {
+    // Per HookEngine::ReplayCommittedChars (HookEngine.cpp:1621): replay pushes
+    // the ORIGINAL user keystrokes from CommitEntry::history into the engine —
+    // not the composed Unicode chars. So a committed 'việt' from input 'vieejt'
+    // replays as PushChar('v'),('i'),('e'),('e'),('j'),('t').
+    //
+    // This test feeds the post-replay-equivalent sequence: 'vieejt' then 's'.
+
+    TypeString(*engine_, L"vieejt");
+    EXPECT_EQ(engine_->Peek(), L"việt") << "Baseline 'vieejt' → 'việt' must hold";
+
+    // Bug repro: 's' after 'việt' should replace j-tone (nặng) with
+    // s-tone (sắc), preserving the ê circumflex → 'viết'.
+    engine_->PushChar(L's');
+    EXPECT_EQ(engine_->Peek(), L"viết")
+        << "After 'vieejt'+'s', engine should replace nặng with sắc → 'viết'.\n"
+        << "PASS means bug is purely in HookEngine commit-undo state machine.\n"
+        << "FAIL means TypingEngine tone-replacement logic is also broken.";
+}
+
+// Sanity check: the simpler path (forward typing without replay) for the same
+// final word — verifies the engine CAN produce 'viết' when 's' is the only
+// tone modifier on the syllable. This locks in what 'right' looks like.
+TEST_F(TelexEngineTest, S2D0_ChromeBug53_Sanity_VieetsForward) {
+    TypeString(*engine_, L"vieets");
+    EXPECT_EQ(engine_->Peek(), L"viết");
 }
 
 // ============================================================================
@@ -1521,6 +1587,26 @@ TEST_F(TelexEngineTest, EdgeCase_ToneReplace_2) {
     EXPECT_EQ(engine_->Peek(), L"ả");
 }
 
+// T5 (docs/TODO.md): tone replacement on already-toned syllable WITH coda.
+// Baseline: forward typing 'casc' should produce 'các' — no replacement involved.
+TEST_F(TelexEngineTest, T5_ToneAfterCoda_BaselineForward) {
+    TypeString(*engine_, L"casc");
+    EXPECT_EQ(engine_->Peek(), L"các");
+}
+
+// T5 (docs/TODO.md): user mistypes 'f' (huyền) on 'ca', adds coda 'c', then
+// corrects with 's' (sắc). 's' must REPLACE huyền with sắc on the toned vowel.
+// Spell-check OFF here — isolates whether the engine alone handles this.
+//   PASS → engine OK; bug lives in PhonotacticsValidator path (CombinedEngineSpellTest).
+//   FAIL → engine tone-replacement logic broken irrespective of validator.
+TEST_F(TelexEngineTest, T5_ToneReplaceAfterCoda_NoSpellCheck) {
+    TypeString(*engine_, L"cafcs");
+    EXPECT_EQ(engine_->Peek(), L"các")
+        << "After 'cafcs', engine should replace huyền with sắc on 'à' → 'các'.\n"
+        << "PASS means engine alone is fine; bug is in validator (CombinedEngineSpellTest).\n"
+        << "FAIL means TypingEngine tone-replacement logic itself is broken.";
+}
+
 TEST_F(TelexEngineTest, EdgeCase_GI_Plus_U) {
     TypeString(*engine_, L"giuw");
     EXPECT_EQ(engine_->Peek(), L"giư");
@@ -2141,6 +2227,33 @@ TEST_F(TelexEngineTest, Bracket_NonConsecutive_NoEscape) {
     EXPECT_EQ(engine_->Peek(), L"n\u1EDBơ");
 }
 
+// Bracket escape after a toned vowel + invalid horn target.
+// Bug 2026-05-21: spell-check ON, typing `tar]]` produced `taử]` because
+// the first `]` created invalid "aư" (spellCheckDisabled_=true), the
+// second `]` then bypassed ProcessModifier (escape unrecognised), fell
+// through to literal-char path, and RelocateToneToTarget hijacked the
+// hỏi tone from `a` onto the orphan ư. Fix: WouldModifierRecoverOrEscape
+// now detects the `[[`/`]]` doubled-trigger pattern.
+TEST_F(TelexEngineTest, BracketEscape_AfterTonedVowel_SpellOff) {
+    TypeString(*engine_, L"tar]]");
+    EXPECT_EQ(engine_->Peek(), L"tả]");
+}
+
+TEST_F(TelexEngineTest, BracketEscape_AfterTonedVowel_SpellOn) {
+    config_.spellCheckEnabled = true;
+    engine_ = std::make_unique<TypingEngine>(config_);
+    TypeString(*engine_, L"tar]]");
+    EXPECT_EQ(engine_->Peek(), L"tả]");
+}
+
+TEST_F(TelexEngineTest, BracketEscape_AfterTonedVowel_OpenBracket_SpellOn) {
+    // Mirror case for `[`: `tar[[` → tone stays on `a`, second `[` escapes.
+    config_.spellCheckEnabled = true;
+    engine_ = std::make_unique<TypingEngine>(config_);
+    TypeString(*engine_, L"tar[[");
+    EXPECT_EQ(engine_->Peek(), L"tả[");
+}
+
 TEST_F(TelexEngineTest, W_Standalone_ProducesUHorn) {
     TypeString(*engine_, L"w");
     EXPECT_EQ(engine_->Peek(), L"ư");
@@ -2232,6 +2345,7 @@ protected:
     void SetUp() override {
         config_.spellCheckEnabled = true;
         config_.optimizeLevel = 0;
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
     TypingConfig config_;
@@ -2244,6 +2358,14 @@ TEST_F(EnglishProtectionTest, HardReject_DR_Cluster) {
     // using "drive" instead to test pure start cluster detection
     TypeString(*engine_, L"drive");
     EXPECT_EQ(engine_->Peek(), L"drive");
+}
+
+TEST_F(EnglishProtectionTest, HardReject_WH_Cluster_SpellOn) {
+    // Spell-check-ON parallel of the no-spell-check `where` test — the wh
+    // revert path is gated on inputMethod==Telex, not on spellCheck, so it
+    // must hold under both fixtures.
+    TypeString(*engine_, L"where");
+    EXPECT_EQ(engine_->Peek(), L"where");
 }
 
 TEST_F(EnglishProtectionTest, HardReject_CL_Cluster) {
@@ -2427,6 +2549,16 @@ TEST_F(CircumflexFreeMarkSpellOnTest, ChieuPlusE_StillCircumflexes) {
     EXPECT_EQ(engine_->Peek(), L"chiêu");
 }
 
+// Free-marking across coda must speculate WITH tone relocation. Previously,
+// "súat" + 'a' (= raw "susata") rejected the circumflex because the
+// unrelocated speculative state had sắc on `u` of `uâ` cluster, which
+// validator marks Invalid. Runtime relocates sắc → `â` after applying
+// circumflex, so the real result `suất` is valid Vietnamese.
+TEST_F(CircumflexFreeMarkSpellOnTest, SuatPlusA_PromotesToSuat) {
+    TypeString(*engine_, L"susata");  // s u s(sắc) a t a → suất
+    EXPECT_EQ(engine_->Peek(), L"suất");
+}
+
 // Adjacent-vowel circumflex (aa/ee/oo direct) must also validate the result.
 // "của" + extra 'a' previously produced "củâ" (invalid syllable).
 TEST_F(CircumflexFreeMarkSpellOnTest, CuaPlusA_AdjacentRejected) {
@@ -2498,6 +2630,125 @@ TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_BR_Cluster_BlocksModifier) {
 TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_SP_Cluster_BlocksTone) {
     TypeString(*engine_, L"spas");
     EXPECT_EQ(engine_->Peek(), L"spas");  // 's' literal
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_WH_Cluster_BlocksToneAndModifier) {
+    // "wh" is impossible in Vietnamese (only wr was listed; wh was missing).
+    // Without the guard, w-h-e-r-e leaks tone 'r' onto 'e' (→ whẻ) and the
+    // trailing 'e' triggers ee→ê (→ whể). Bias must lock to HardEnglish at "wh".
+    // Full Telex path: P8 rewrites 'w' → synthetic ư before the states-based
+    // start-cluster check sees it, so the raw-input fallback must catch wh.
+    TypeString(*engine_, L"where");
+    EXPECT_EQ(engine_->Peek(), L"where");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, WwEscape_StillWorks) {
+    // Regression guard: ww → literal w (Telex escape) must not be tripped
+    // by the wh start-cluster fix — IsHardEnglishStart('w','w') is false.
+    TypeString(*engine_, L"ww");
+    EXPECT_EQ(engine_->Peek(), L"w");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_KN_Cluster_BlocksTone) {
+    // "kn" is impossible in Vietnamese (know, knee, knight, knife...)
+    TypeString(*engine_, L"knas");
+    EXPECT_EQ(engine_->Peek(), L"knas");  // 's' NOT applied as tone
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_KN_Cluster_BlocksModifier) {
+    // "know" — 'w' must stay literal, not become ư
+    TypeString(*engine_, L"know");
+    EXPECT_EQ(engine_->Peek(), L"know");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_PN_Cluster_BlocksTone) {
+    // "pn" is impossible in Vietnamese (pneumonia, pneumatic...)
+    TypeString(*engine_, L"pnas");
+    EXPECT_EQ(engine_->Peek(), L"pnas");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, HardReject_PS_Cluster_BlocksTone) {
+    // "ps" is impossible in Vietnamese (psycho, psalm, pseudo...)
+    TypeString(*engine_, L"psas");
+    EXPECT_EQ(engine_->Peek(), L"psas");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, GH_Cluster_IsVietnamese) {
+    // Regression guard: 'gh' IS a valid Vietnamese onset (ghế, ghi, ghen, ghê).
+    // Must NOT be in IsHardEnglishStart — 'ghes' should compose 'ghẹ' (nặng on 'e'
+    // becomes ghẹ when nucleus is plain e; here ghes → ghệ via ee→ê + s on bare e:
+    // actually just verify tone applies, not the exact diacritic shape).
+    TypeString(*engine_, L"ghes");
+    // 's' (Sac) should land on 'e' → ghé. If 'gh' were blocked, tone would be
+    // literal and Peek would equal 'ghes'.
+    EXPECT_EQ(engine_->Peek(), L"ghé");
+}
+
+// ─── Regression guards for kn/pn/ps additions: TV onsets starting with k-/p- ─
+// Must NOT over-block legitimate Vietnamese words. k is always followed by a
+// vowel (e/ê/i/y) in TV; p is rare standalone but appears in loanwords (pin,
+// Pháp). ph is a TV digraph, not blocked.
+
+TEST_F(EnglishDetectionNoSpellCheckTest, KConsonant_KemNotBlocked) {
+    TypeString(*engine_, L"kems");  // kém = k+e+m+s(sac)
+    EXPECT_EQ(engine_->Peek(), L"kém");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, KConsonant_KinhNotBlocked) {
+    TypeString(*engine_, L"kinh");  // kinh — k+i+n+h, no tone
+    EXPECT_EQ(engine_->Peek(), L"kinh");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, KConsonant_KeetsComposesKet) {
+    TypeString(*engine_, L"keets");  // kết = k+e+e(→ê)+t+s(sac)
+    EXPECT_EQ(engine_->Peek(), L"kết");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, KConsonant_KieenComposesKien) {
+    TypeString(*engine_, L"kieen");  // kiên = k+i+e+e(→ê)+n
+    EXPECT_EQ(engine_->Peek(), L"kiên");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, PConsonant_PinNotBlocked) {
+    TypeString(*engine_, L"pin");  // loanword "pin" (battery)
+    EXPECT_EQ(engine_->Peek(), L"pin");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, PhConsonant_PhoComposesPho) {
+    TypeString(*engine_, L"phowr");  // phở = ph+o+w(→ơ)+r(hoi)
+    EXPECT_EQ(engine_->Peek(), L"phở");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, PhConsonant_PhapsComposesPhap) {
+    TypeString(*engine_, L"phaps");  // Pháp = ph+a+p+s(sac)
+    EXPECT_EQ(engine_->Peek(), L"pháp");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, KhConsonant_KhongNotBlocked) {
+    TypeString(*engine_, L"khoong");  // không = kh+o+o(→ô)+n+g
+    EXPECT_EQ(engine_->Peek(), L"không");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, PhConsonant_PhuocsComposesPhuoc) {
+    TypeString(*engine_, L"phuwowcs");  // phước = ph+u+w(→ư)+o+w(→ơ)+c+s(sac)
+    EXPECT_EQ(engine_->Peek(), L"phước");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, WsngStaysUng) {
+    // Regression: 'w' (P8 → ư) + 's' (Sac tone) + n + g must compose to ứng.
+    // raw[0..1]='ws' is not in IsHardEnglishStart, so the wh/wr revert path
+    // must not interfere.
+    TypeString(*engine_, L"wsng");
+    EXPECT_EQ(engine_->Peek(), L"ứng");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, WrngStaysUng_ToneBlocksRevert) {
+    // Regression: 'w' (P8 → ư) + 'r' (Hoi tone) + n + g must compose to ửng,
+    // even though raw[0..1]='wr' IS in IsHardEnglishStart. The synthetic-ư
+    // revert is gated on tone==None precisely so this Vietnamese sequence
+    // (tone applied at step 2) survives.
+    TypeString(*engine_, L"wrng");
+    EXPECT_EQ(engine_->Peek(), L"ửng");
 }
 
 TEST_F(EnglishDetectionNoSpellCheckTest, ValidVietnamese_StillComposes) {
@@ -3009,6 +3260,13 @@ TEST_F(SimpleTelexTest, RealWord_Duong) {
     EXPECT_EQ(engine_->Peek(), L"đương");
 }
 
+TEST_F(SimpleTelexTest, WhPrefix_IsHardEnglish) {
+    // SimpleTelex keeps 'w' literal (P8 gated off), so the states-based
+    // IsHardEnglishStart check is what catches wh here — no raw fallback needed.
+    TypeString(*engine_, L"where");
+    EXPECT_EQ(engine_->Peek(), L"where");
+}
+
 // ============================================================================
 // AUTO-RESTORE TESTS
 // When autoRestoreEnabled + spellCheckEnabled, invalid words return raw keys
@@ -3021,6 +3279,7 @@ protected:
         config_.spellCheckEnabled = true;
         config_.autoRestoreEnabled = true;
         config_.optimizeLevel = 0;
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -3668,11 +3927,94 @@ TEST_F(AutoRestoreTest, StrokeD_Ddp_KeepsAbbreviation) {
     EXPECT_EQ(engine_->Commit(), L"đp");
 }
 
-TEST_F(AutoRestoreTest, StrokeD_Awndd_Restores) {
-    // "awndd" → breve 'a', then "ndd" with dd blocked by spellCheck → "ăndd"
-    // invalid → auto-restore to "awndd"
+TEST_F(AutoRestoreTest, StrokeD_Awndd_ProducesAbbreviation) {
+    // "awndd" → breve 'a' + 'n' + dd→đ bypass fires (d after consonant 'n')
+    // → "ănđ". HasIntentionalStrokeD keeps it (no plain vowels after đ).
     TypeString(*engine_, L"awndd");
-    EXPECT_EQ(engine_->Commit(), L"awndd");
+    EXPECT_EQ(engine_->Peek(), L"ănđ");
+    EXPECT_EQ(engine_->Commit(), L"ănđ");
+}
+
+// ============================================================================
+// DD→Đ ABBREVIATION BYPASS TESTS
+// dd→đ bypasses spellCheckDisabled_ when 'd' follows a consonant (not vowel).
+// FindStrokeDTarget already blocks vowel-preceded 'd' (e.g., "add").
+// HasIntentionalStrokeD at commit protects abbreviations (đ + consonant only).
+// ============================================================================
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_HD_NoExclusion) {
+    // "hdd" → "hđ" without needing exclusion entry. HasIntentionalStrokeD keeps it.
+    TypeString(*engine_, L"hdd");
+    EXPECT_EQ(engine_->Peek(), L"hđ");
+    EXPECT_EQ(engine_->Commit(), L"hđ");
+}
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_SDT_NoExclusion) {
+    // "sddt" → "sđt" — abbreviation for "số điện thoại"
+    TypeString(*engine_, L"sddt");
+    EXPECT_EQ(engine_->Peek(), L"sđt");
+    EXPECT_EQ(engine_->Commit(), L"sđt");
+}
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_TDN_NoExclusion) {
+    // "tddn" → "tđn" — abbreviation for "tên đệm ngắn"
+    TypeString(*engine_, L"tddn");
+    EXPECT_EQ(engine_->Peek(), L"tđn");
+    EXPECT_EQ(engine_->Commit(), L"tđn");
+}
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_Add_StillBlocked) {
+    // "add" → dd after vowel 'a' → FindStrokeDTarget returns SIZE_MAX → no bypass
+    TypeString(*engine_, L"add");
+    EXPECT_EQ(engine_->Peek(), L"add");
+    EXPECT_EQ(engine_->Commit(), L"add");
+}
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_Odd_StillBlocked) {
+    // "odd" → dd after vowel 'o' → no bypass
+    TypeString(*engine_, L"odd");
+    EXPECT_EQ(engine_->Peek(), L"odd");
+    EXPECT_EQ(engine_->Commit(), L"odd");
+}
+
+TEST_F(AutoRestoreTest, StrokeD_Bypass_VNI_HD9) {
+    // VNI: "hd9" → "hđ" — same bypass for VNI stroke key '9'
+    TypingConfig cfg;
+    cfg.inputMethod = InputMethod::VNI;
+    cfg.spellCheckEnabled = true;
+    cfg.autoRestoreEnabled = true;
+    TypingEngine eng(cfg);
+    TypeString(eng, L"hd9");
+    EXPECT_EQ(eng.Peek(), L"hđ");
+    EXPECT_EQ(eng.Commit(), L"hđ");
+}
+
+// Capitalization preservation during auto-restore (backspace-revive scenario).
+// SeedFromText decomposes Vietnamese chars into lowercase bases + isUpper flag,
+// so rawInput_ contains lowercase. Without the fix, auto-restore returns the
+// lowercase raw input, destroying the user's capitalization.
+
+TEST_F(AutoRestoreTest, SeedFromText_UppercasePreserved_VKey) {
+    // Simulate backspace-revive: SeedFromText("VKey") → rawInput_ = "vkey"
+    // but composed = "VKey". Since raw=="VKey" after cap fix, skip restore.
+    EXPECT_TRUE(engine_->SeedFromText(L"VKey"));
+    // "VKey" is not a valid Vietnamese word, but after capitalizing raw[0]
+    // to match composed[0], raw == composed → return composed unchanged.
+    EXPECT_EQ(engine_->Commit(), L"VKey");
+}
+
+TEST_F(AutoRestoreTest, SeedFromText_LowercaseUnaffected) {
+    // Lowercase input: SeedFromText("vkey") → rawInput_ = "vkey",
+    // composed = "vkey". raw == composed → no restore, return as-is.
+    EXPECT_TRUE(engine_->SeedFromText(L"vkey"));
+    EXPECT_EQ(engine_->Commit(), L"vkey");
+}
+
+TEST_F(AutoRestoreTest, SeedFromText_UppercasePreserved_Facebook) {
+    // "Facebook" → after seed, raw = "facebook", composed = "Facebook".
+    // After cap fix, raw = "Facebook" == composed → return composed.
+    EXPECT_TRUE(engine_->SeedFromText(L"Facebook"));
+    EXPECT_EQ(engine_->Commit(), L"Facebook");
 }
 
 // ============================================================================
@@ -3710,10 +4052,12 @@ TEST_F(SpellExclusionTest, ExcludedPrefix_CoversDerivedWords) {
 }
 
 TEST_F(SpellExclusionTest, NonExcluded_AutoRestores) {
-    // "hhdd" → "hhđ" is NOT prefixed by "hđ" (starts with "hh") → auto-restore
+    // "hhdd" → "hhđ": dd bypass fires (d after consonant h). HasIntentionalStrokeD
+    // keeps "hhđ" (no plain vowels after đ). Exclusion "hđ" doesn't prefix-match
+    // "hhđ", but the abbreviation heuristic is the primary safety net here.
     TypeString(*engine_, L"hhdd");
-    std::wstring result = engine_->Commit();
-    EXPECT_EQ(result, L"hhdd");
+    EXPECT_EQ(engine_->Peek(), L"hhđ");
+    EXPECT_EQ(engine_->Commit(), L"hhđ");
 }
 
 TEST_F(SpellExclusionTest, SecondExclusion_Works) {
@@ -3724,14 +4068,15 @@ TEST_F(SpellExclusionTest, SecondExclusion_Works) {
 }
 
 TEST_F(SpellExclusionTest, EmptyExclusionList_NormalBehavior) {
-    // No exclusions → normal spell check applies
+    // No exclusions → dd→đ bypass fires (d after consonant), HasIntentionalStrokeD
+    // keeps "hđ" at commit time (no plain vowels after đ → abbreviation heuristic)
     TypingConfig cfg;
     cfg.spellCheckEnabled = true;
     cfg.autoRestoreEnabled = true;
     TypingEngine eng(cfg);
     TypeString(eng, L"hdd");
-    // "hđ" is invalid syllable, no exclusion → auto-restore
-    EXPECT_EQ(eng.Commit(), L"hdd");
+    EXPECT_EQ(eng.Peek(), L"hđ");
+    EXPECT_EQ(eng.Commit(), L"hđ");
 }
 
 TEST_F(SpellExclusionTest, CaseInsensitive) {
@@ -3745,15 +4090,16 @@ TEST_F(SpellExclusionTest, CaseInsensitive) {
 }
 
 TEST_F(SpellExclusionTest, SingleCharExclusion_Ignored) {
-    // Exclusion entries < 2 chars should be ignored
+    // Exclusion entries < 2 chars should be ignored, but dd→đ bypass still fires
+    // (d after consonant h → abbreviation). HasIntentionalStrokeD keeps "hđ".
     TypingConfig cfg;
     cfg.spellCheckEnabled = true;
     cfg.autoRestoreEnabled = true;
     cfg.spellExclusions = {L"đ"};  // Too short, should be ignored
     TypingEngine eng(cfg);
     TypeString(eng, L"hdd");
-    // "hđ" not matched (single-char pattern ignored) → auto-restore
-    EXPECT_EQ(eng.Commit(), L"hdd");
+    EXPECT_EQ(eng.Peek(), L"hđ");
+    EXPECT_EQ(eng.Commit(), L"hđ");
 }
 
 // PLHĐ: English Protection normally blocks dd→đ (PL = HardEnglish).
@@ -3978,6 +4324,36 @@ TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_Initial_WithCoda_Works) {
     EXPECT_EQ(engine_->Peek(), L"đoc");
 }
 
+// REPRO: bug 2026-05-22 — "detail"+d → "đetail" (expected "detaild").
+// Late-stroke applies to leading 'd' even though e-t-a forms V+C+V (English).
+// Coda-block pre-check has "leading-d + vowel" exception that lets this slip.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LateStroke_RejectVCV_detail) {
+    TypeString(*engine_, L"detaild");
+    EXPECT_EQ(engine_->Peek(), L"detaild");
+}
+
+// Recovery: leading-Đ escape on trailing-d when vowel sits between.
+// "ddoc" (fast-typed 'doc' with key bounce) → "đoc"; user adds 'd' to recover.
+// Vietnamese never has coda 'd', so trailing d = English/typo signal.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDdEscape_ddocd) {
+    TypeString(*engine_, L"ddocd");
+    EXPECT_EQ(engine_->Peek(), L"docd");  // User then BS once → "doc"
+}
+
+// Sanity: abbreviation chain — no vowel between leading Đ and trailing d
+// (ddxd) must keep Đ; the trailing d is a fresh literal.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDdEscape_NoVowel_ddxd) {
+    TypeString(*engine_, L"ddxd");
+    EXPECT_EQ(engine_->Peek(), L"đxd");
+}
+
+// Sanity: longer recovery — "ddong" + d → "dongd" (lose đ, gain trailing d).
+// Trade-off: rare "đôngd"-style typing loses, common fast-d-doc recovery wins.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDdEscape_ddongd) {
+    TypeString(*engine_, L"ddongd");
+    EXPECT_EQ(engine_->Peek(), L"dongd");
+}
+
 TEST_F(TelexEngineTest, DModifier_Initial_WithCoda_SpellCheckOn) {
     // Same as above with spell check ON — "docd" → "đoc" (valid syllable)
     TypeString(*engine_, L"docd");
@@ -4000,6 +4376,44 @@ TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_DropdownLiteral9Keys) {
     // "dropddown" (9 keys): coda pre-check → HardEnglish → all literal
     TypeString(*engine_, L"dropddown");
     EXPECT_EQ(engine_->Peek(), L"dropddown");
+}
+
+// Abbreviation continuation: a NEW dd→Đ trigger after an existing Đ + consonant
+// must still fire. Symptom before fix: HDDLDD → "HĐLDD" because pre-check found
+// the existing Đ as a stroke-target and tripped IsStrokeDBlockedByCoda on the
+// intervening L, then poisoned bias=HardEnglish for the next d. HĐLĐ is the
+// common abbrev for "Hợp Đồng Lao Động"; vđtđ-style chains must also work.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_AllCapsAbbreviation_HDDLDD_NoSpell) {
+    TypeString(*engine_, L"HDDLDD");
+    EXPECT_EQ(engine_->Peek(), L"HĐLĐ");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LowerAbbreviation_hddldd_NoSpell) {
+    TypeString(*engine_, L"hddldd");
+    EXPECT_EQ(engine_->Peek(), L"hđlđ");
+}
+
+TEST_F(TelexEngineTest, DModifier_AllCapsAbbreviation_HDDLDD_SpellOn) {
+    TypeString(*engine_, L"HDDLDD");
+    EXPECT_EQ(engine_->Peek(), L"HĐLĐ");
+}
+
+TEST_F(TelexEngineTest, DModifier_LowerAbbreviation_hddldd_SpellOn) {
+    TypeString(*engine_, L"hddldd");
+    EXPECT_EQ(engine_->Peek(), L"hđlđ");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_AbbreviationChain_vddtdd) {
+    // v-d-d-t-d-d → vđtđ — second dd cluster fires after Đ+consonant.
+    TypeString(*engine_, L"vddtdd");
+    EXPECT_EQ(engine_->Peek(), L"vđtđ");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_NoEscape_AcrossIntervening_ddxd) {
+    // d-d-x-d → đxd: the standalone d after Đ+x must NOT escape Đ (which would
+    // have produced "dxd"). Đ belongs to the prior segment.
+    TypeString(*engine_, L"ddxd");
+    EXPECT_EQ(engine_->Peek(), L"đxd");
 }
 
 TEST_F(EnglishDetectionNoSpellCheckTest, WModifier_EscapeUndosBothHorns) {
@@ -4477,6 +4891,296 @@ TEST_F(TelexEngineTest, Seed_LatinOnlyWord_Succeeds) {
     // based on spell validity; the engine just decomposes.
     EXPECT_TRUE(engine_->SeedFromText(L"system"));
     EXPECT_EQ(engine_->Peek(), L"system");
+}
+
+// ============================================================================
+// ESC RESTORE RAW TESTS — PeekRaw() returns raw keys for Esc-restore feature
+// ============================================================================
+
+TEST_F(TelexEngineTest, EscRestoreRaw_BasicVirus) {
+    // v-i-r-u-s composes to Vietnamese form; rawInput keeps original keys
+    TypeString(*engine_, L"virus");
+    EXPECT_EQ(engine_->PeekRaw(), L"virus");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_PeekRawClearedByCommit) {
+    // Contract test for design 2026-05-17: callers MUST snapshot PeekRaw()
+    // BEFORE Commit() because Commit() internally calls Reset() which clears
+    // escRawHistory_. See TypingEngine.cpp:1495,1504,1539,1546 -> Reset() ->
+    // escRawHistory_.clear() (line 1553).
+    TypeString(*engine_, L"virus");
+    ASSERT_EQ(engine_->PeekRaw(), L"virus")
+        << "Sanity: raw is populated while engine has buffer";
+
+    std::wstring committed = engine_->Commit();
+    EXPECT_FALSE(committed.empty())
+        << "Commit() should return non-empty composed text";
+    EXPECT_EQ(engine_->PeekRaw(), L"")
+        << "Commit() must call Reset() which clears escRawHistory_; "
+           "callers MUST snapshot PeekRaw() BEFORE Commit().";
+    EXPECT_EQ(engine_->Count(), 0u);
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_PreservesUpperCase) {
+    TypeString(*engine_, L"VIRUS");
+    EXPECT_EQ(engine_->PeekRaw(), L"VIRUS");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_PreservesMixedCase) {
+    TypeString(*engine_, L"ViRuS");
+    EXPECT_EQ(engine_->PeekRaw(), L"ViRuS");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_QuickStartConsonant) {
+    // f → ph: rawInput keeps 'f' (the actual key user pressed)
+    config_.quickStartConsonant = true;
+    engine_ = std::make_unique<TypingEngine>(config_);
+    engine_->PushChar(L'f');
+    EXPECT_EQ(engine_->Peek(), L"ph");           // composed form
+    EXPECT_EQ(engine_->PeekRaw(), L"f");          // raw form
+    EXPECT_EQ(engine_->Count(), 2u);              // 2 displayed chars
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_EmptyBufferReturnsEmpty) {
+    EXPECT_EQ(engine_->PeekRaw(), L"");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_ClearedAfterReset) {
+    TypeString(*engine_, L"hello");
+    ASSERT_FALSE(engine_->PeekRaw().empty());
+    engine_->Reset();
+    EXPECT_EQ(engine_->PeekRaw(), L"");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_DoubleSToneEscape) {
+    // a-s-u-s: 1st 's' applies acute tone to 'a' (states="áu"), 2nd 's' is
+    // tone-escape — engine clears the tone and treats 's' as literal.
+    // PeekRaw must return the FULL keystroke sequence "asus" so the user can
+    // recover their original word. The pre-existing auto-restore feature uses
+    // a different buffer (rawInput_) which deliberately drops the consumed
+    // first 's' to give "aus"; ESC-restore-raw must NOT inherit that semantics.
+    TypeString(*engine_, L"asus");
+    EXPECT_EQ(engine_->PeekRaw(), L"asus");
+}
+
+// Regression suite for ESC restore raw under SimpleTelex + allowZwjf=true
+// (typical real-user config). Engine's display mangles many English words
+// when tone/modifier keys get consumed; PeekRaw must always return the full
+// keystroke sequence so ESC can recover the literal.
+TEST_F(TelexEngineTest, EscRestoreRaw_SimpleTelex_EnglishWords) {
+    config_.inputMethod = InputMethod::SimpleTelex;
+    config_.allowZwjf = true;
+    engine_ = std::make_unique<TypingEngine>(config_);
+
+    struct Case { const wchar_t* keys; const wchar_t* expectRaw; };
+    Case cases[] = {
+        // Double-tone-letter English words — engine consumes 1 char from display,
+        // PeekRaw must preserve full sequence so user can recover.
+        { L"ass",     L"ass"     },
+        { L"bass",    L"bass"    },
+        { L"pass",    L"pass"    },
+        { L"mass",    L"mass"    },
+        { L"less",    L"less"    },
+        { L"miss",    L"miss"    },
+        { L"sorry",   L"sorry"   },
+        { L"error",   L"error"   },
+        // EnglishBias catches str- prefix; display + raw both match.
+        { L"stress",  L"stress"  },
+        // Non-double-tone English words with tone/modifier consumption.
+        { L"where",   L"where"   },
+        { L"users",   L"users"   },
+        { L"perfect", L"perfect" },
+        // Tone-escape gesture path (user knew r=tone, double-pressed to escape).
+        // PeekRaw returns 6 chars matching the 6 keystrokes — consistent with
+        // the asus case, even though display happens to show 5.
+        { L"wherre",  L"wherre"  },
+        // Telex-novice case — wants the original literal back.
+        { L"asus",    L"asus"    },
+    };
+    for (const auto& c : cases) {
+        engine_->Reset();
+        TypeString(*engine_, c.keys);
+        // c.keys is always ASCII (English test words) — explicit narrow avoids
+        // MSVC /WX C4244 from std::string(wchar_t*, wchar_t*).
+        std::string narrow;
+        for (const wchar_t* p = c.keys; *p; ++p) narrow.push_back(static_cast<char>(*p));
+        EXPECT_EQ(engine_->PeekRaw(), c.expectRaw) << "input: " << narrow;
+    }
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_BackspaceShrinks) {
+    // v-i-r-u-s composes "víu"; pressing BS removes one displayed char.
+    // PeekRaw must shrink by 1 to match — gives the user a coherent
+    // "what I have left" view.
+    TypeString(*engine_, L"virus");
+    ASSERT_EQ(engine_->PeekRaw(), L"virus");
+    engine_->Backspace();
+    EXPECT_EQ(engine_->PeekRaw(), L"viru");
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_BackspaceToEmpty_ClearsHistory) {
+    // dd → đ (1 displayed char from 2 keystrokes). BS empties states.
+    // escRawHistory must wipe too so the next word's typing doesn't
+    // accumulate behind stale 'd'.
+    engine_->PushChar(L'd');
+    engine_->PushChar(L'd');
+    ASSERT_EQ(engine_->PeekRaw(), L"dd");
+    engine_->Backspace();
+    EXPECT_EQ(engine_->PeekRaw(), L"");
+    engine_->PushChar(L'a');
+    EXPECT_EQ(engine_->PeekRaw(), L"a");  // not "da"
+}
+
+TEST_F(TelexEngineTest, EscRestoreRaw_DoesNotMutateState) {
+    // PeekRaw must be const-like: calling it twice gives the same result
+    // and doesn't disturb the engine.
+    TypeString(*engine_, L"virus");
+    auto first = engine_->PeekRaw();
+    auto second = engine_->PeekRaw();
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(first, L"virus");
+    // After PeekRaw, engine still works normally
+    engine_->PushChar(L's');
+    EXPECT_FALSE(engine_->Peek().empty());
+}
+
+// ============================================================================
+// uyê smart-accent intermediate — typing the syllable's final `e` AFTER the
+// coda+tone (e.g. chuyenje, tuyensje, xuyensje) should free-mark e → ê and
+// land the tone on ê via P2 priority. Mirrors the long-standing iê path
+// (bietje → biệt, chiense → chiến). Bug surfaced 2026-05-16.
+// ============================================================================
+class UyeSmartAccentTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        cfg_.inputMethod = InputMethod::Telex;
+        cfg_.spellCheckEnabled = true;
+        cfg_.modernOrtho = true;
+        engine_ = std::make_unique<TypingEngine>(cfg_);
+    }
+    TypingConfig cfg_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+
+TEST_F(UyeSmartAccentTest, Chuyenje_Nang)   { TypeString(*engine_, L"chuyenje");  EXPECT_EQ(engine_->Peek(), L"chuyện"); }
+TEST_F(UyeSmartAccentTest, Tuyenje_Nang)    { TypeString(*engine_, L"tuyenje");   EXPECT_EQ(engine_->Peek(), L"tuyện"); }
+TEST_F(UyeSmartAccentTest, Tuyetje_Nang)    { TypeString(*engine_, L"tuyetje");   EXPECT_EQ(engine_->Peek(), L"tuyệt"); }
+TEST_F(UyeSmartAccentTest, Nguyenje_Nang)   { TypeString(*engine_, L"nguyenje");  EXPECT_EQ(engine_->Peek(), L"nguyện"); }
+TEST_F(UyeSmartAccentTest, Xuyense_Sac)     { TypeString(*engine_, L"xuyense");   EXPECT_EQ(engine_->Peek(), L"xuyến"); }
+TEST_F(UyeSmartAccentTest, Nguyenxe_Nga)    { TypeString(*engine_, L"nguyenxe");  EXPECT_EQ(engine_->Peek(), L"nguyễn"); }
+// Canonical (ee first) must still work unchanged.
+TEST_F(UyeSmartAccentTest, Chuyeenj_Canonical) { TypeString(*engine_, L"chuyeenj"); EXPECT_EQ(engine_->Peek(), L"chuyện"); }
+// Regression guards: shouldn't disturb adjacent diphthong tone rules.
+TEST_F(UyeSmartAccentTest, Chuyf_ModernYHuyen) { TypeString(*engine_, L"chuyf");  EXPECT_EQ(engine_->Peek(), L"chuỳ"); }   // modern uy=SECOND keeps tone on y — fix targets uye (3-vowel), not uy (2-vowel)
+TEST_F(UyeSmartAccentTest, Khuyaj_UyaTrip)     { TypeString(*engine_, L"khuyaj"); EXPECT_EQ(engine_->Peek(), L"khuỵa"); }  // uya triphthong middle (per IsTriphthong table — tone on y unaffected by the new uye case)
+
+// Classic ortho: same fix, different 2-vowel tone placement preserved (no coda → tone on u, with coda → tone on y).
+class UyeSmartAccentClassicTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        cfg_.inputMethod = InputMethod::Telex;
+        cfg_.spellCheckEnabled = true;
+        cfg_.modernOrtho = false;  // CLASSIC
+        engine_ = std::make_unique<TypingEngine>(cfg_);
+    }
+    TypingConfig cfg_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+TEST_F(UyeSmartAccentClassicTest, Chuyenje_ClassicSameResult) { TypeString(*engine_, L"chuyenje"); EXPECT_EQ(engine_->Peek(), L"chuyện"); }
+TEST_F(UyeSmartAccentClassicTest, Tuyetje_ClassicSameResult)  { TypeString(*engine_, L"tuyetje");  EXPECT_EQ(engine_->Peek(), L"tuyệt"); }
+TEST_F(UyeSmartAccentClassicTest, Chuyf_ClassicUHuyen)        { TypeString(*engine_, L"chuyf");    EXPECT_EQ(engine_->Peek(), L"chùy"); }    // classic uy=CODA_AWARE no-coda → FIRST = u
+TEST_F(UyeSmartAccentClassicTest, Huynhf_ClassicYHuyen)       { TypeString(*engine_, L"huynhf");   EXPECT_EQ(engine_->Peek(), L"huỳnh"); }   // classic uy=CODA_AWARE with coda → SECOND = y
+
+// ============================================================================
+// PROBE: tone-middle + smart-accent  (bug 2026-05-25: vijeet → vịeet)
+// ============================================================================
+// Pattern: tone key arrives BETWEEN single vowel and the smart-accent doubling.
+// Expected: when 2nd 'e' fires ee→ê, tone must relocate from i to ê.
+// "i" + tone "j" → "ị" ; then "e" + "e" → ee should promote to "iê" and
+// re-place tone (nặng) onto ê → "iệ" ; final "t" coda → "việt".
+class ToneMidSmartAccentTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        cfg_.inputMethod = InputMethod::Telex;
+        cfg_.spellCheckEnabled = true;  // bug only reported with spell-check ON
+        engine_ = std::make_unique<TypingEngine>(cfg_);
+    }
+    TypingConfig cfg_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+TEST_F(ToneMidSmartAccentTest, Vijeet_ToneBeforeSmartAccent) {
+    TypeString(*engine_, L"vijeet");
+    EXPECT_EQ(engine_->Peek(), L"việt");
+}
+TEST_F(ToneMidSmartAccentTest, Vieetj_Canonical_SpellOn) {
+    TypeString(*engine_, L"vieetj");
+    EXPECT_EQ(engine_->Peek(), L"việt");
+}
+// Probe step-by-step: does ee→ê fire after a toned vowel at all?
+TEST_F(ToneMidSmartAccentTest, Probe_Ije_NoCoda)    { TypeString(*engine_, L"ije");   EXPECT_EQ(engine_->Peek(), L"ịe"); }   // baseline: tone on i, +e
+TEST_F(ToneMidSmartAccentTest, Probe_Ijee_NoCoda)   { TypeString(*engine_, L"ijee");  EXPECT_EQ(engine_->Peek(), L"iệ"); }   // does ee promote + relocate tone?
+TEST_F(ToneMidSmartAccentTest, Probe_Vijee_NoCoda)  { TypeString(*engine_, L"vijee"); EXPECT_EQ(engine_->Peek(), L"việ"); }  // same with leading consonant
+
+// Mirror: spell-check OFF — does the same input behave the same?
+class ToneMidSmartAccentSpellOffTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        cfg_.inputMethod = InputMethod::Telex;
+        cfg_.spellCheckEnabled = false;
+        engine_ = std::make_unique<TypingEngine>(cfg_);
+    }
+    TypingConfig cfg_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+TEST_F(ToneMidSmartAccentSpellOffTest, Vijeet_SpellOff) { TypeString(*engine_, L"vijeet"); EXPECT_EQ(engine_->Peek(), L"việt"); }
+
+// Same root pattern, 'oo' family (user-reported 2026-05-25):
+//   ngufono → nguồn (free-marking 'o' works because no adjacent oo)
+//   ngufoon → should also be 'nguồn' (adjacent oo case)
+TEST_F(ToneMidSmartAccentTest, Ngufoon_ToneBeforeAdjacentOO) {
+    TypeString(*engine_, L"ngufoon");
+    EXPECT_EQ(engine_->Peek(), L"nguồn");
+}
+TEST_F(ToneMidSmartAccentTest, Ngufono_FreeMarkingControl) {
+    TypeString(*engine_, L"ngufono");
+    EXPECT_EQ(engine_->Peek(), L"nguồn");  // should already pass — free-marking, not adjacent
+}
+// Modern ortho variant — does modernOrtho flip the behavior?
+class ToneMidSmartAccentModernTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        cfg_.inputMethod = InputMethod::Telex;
+        cfg_.spellCheckEnabled = true;
+        cfg_.modernOrtho = true;
+        engine_ = std::make_unique<TypingEngine>(cfg_);
+    }
+    TypingConfig cfg_;
+    std::unique_ptr<TypingEngine> engine_;
+};
+TEST_F(ToneMidSmartAccentModernTest, Ngufoon_Modern) {
+    TypeString(*engine_, L"ngufoon");
+    EXPECT_EQ(engine_->Peek(), L"nguồn");
+}
+TEST_F(ToneMidSmartAccentModernTest, Vijeet_Modern) {
+    TypeString(*engine_, L"vijeet");
+    EXPECT_EQ(engine_->Peek(), L"việt");
+}
+
+// Late-modifier on Valid pre-state — documented Vietnamese behavior
+// (vietnamese-phonology-spec-distillate.md, category-10 w-priority).
+// These MUST work despite c6369dd's adjacent-circumflex "Valid → reject" branch
+// because they go through HandleHornW (not HandleAdjacentCircumflex).
+TEST_F(ToneMidSmartAccentTest, Cuarw_LateHornAfterValid) {
+    TypeString(*engine_, L"cuarw");
+    EXPECT_EQ(engine_->Peek(), L"cửa");
+}
+TEST_F(ToneMidSmartAccentTest, Hoaw_LateBreveAfterValid) {
+    TypeString(*engine_, L"hoaw");
+    EXPECT_EQ(engine_->Peek(), L"hoă");
+}
+TEST_F(ToneMidSmartAccentTest, Muaw_LateHornAfterValidUaPair) {
+    TypeString(*engine_, L"muaw");
+    EXPECT_EQ(engine_->Peek(), L"mưa");
 }
 
 }  // namespace

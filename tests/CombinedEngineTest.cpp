@@ -1,5 +1,5 @@
-// NexusKey - Combined Mode (Telex + VNI) Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Combined Mode (Telex + VNI) Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/engine/TypingEngine.h"
@@ -373,6 +373,67 @@ TEST_F(CombinedEngineSpellTest, EnglishProtection_TestDigits) {
     }
     // In practice: 's' applies tone to 'e' → 'tét', then 't' after, then '1' escapes or is literal
     // The important thing is the overall word doesn't produce unexpected Vietnamese
+}
+
+// T5 (docs/TODO.md): baseline forward 'casc' → 'các' under spell-check ON.
+TEST_F(CombinedEngineSpellTest, T5_ToneAfterCoda_BaselineForward) {
+    TypeString(*engine_, L"casc");
+    EXPECT_EQ(engine_->Peek(), L"các");
+}
+
+// T5 (docs/TODO.md): user mistypes huyền 'f' on 'ca', adds coda 'c', then
+// corrects with sắc 's'. Engine must replace huyền with sắc on 'à' → 'các'.
+// Spell-check ON — this is where the original bug was reported. If engine
+// alone (TelexEngineTest spell-check OFF) passes but THIS fails, the bug is
+// in the validator (PhonotacticsValidator) blocking the post-replace candidate.
+TEST_F(CombinedEngineSpellTest, T5_ToneReplaceAfterCoda_WithSpellCheck) {
+    TypeString(*engine_, L"cafcs");
+    EXPECT_EQ(engine_->Peek(), L"các")
+        << "After 'cafcs' under spell-check ON, engine must replace huyền\n"
+        << "with sắc on already-toned 'à' → 'các'. Bug per docs/TODO.md.";
+}
+
+// T5 case 2 (anh 2026-05-07): modifier on invalid buffer + tone correction.
+// User types 'cafc' (yields invalid `càc`), then 'w' to change 'a' to 'ă'
+// (yields `cằc` — still invalid since huyền + stop coda), then 'j' to switch
+// tone to nặng → `cặc` (valid: nặng + stop coda). Expects engine to allow
+// the modifier through despite intermediate invalid state, and the tone-
+// replacement gate to recover validity on the final 'j'.
+TEST_F(CombinedEngineSpellTest, T5_ModifierThenToneFix_W_J) {
+    TypeString(*engine_, L"cafcwj");
+    EXPECT_EQ(engine_->Peek(), L"cặc")
+        << "User mistypes huyền+coda invalid (càc), then corrects vowel with\n"
+        << "w (a→ă, still invalid cằc), then tone with j (huyền→nặng = cặc valid).";
+}
+
+// T5 case 2 variant: same scenario with 'aa' (circumflex a→â) instead of 'w'.
+TEST_F(CombinedEngineSpellTest, T5_ModifierThenToneFix_AA_J) {
+    TypeString(*engine_, L"cafcaj");
+    EXPECT_EQ(engine_->Peek(), L"cậc")
+        << "User corrects vowel with aa (a→â) then tone with j (huyền→nặng).";
+}
+
+// T5 case 1 — generic across vowels (anh question 2026-05-07: "mấy chữ như e o có bị không").
+// Verify the tone-replacement-recovers-validity fix works for all main vowels,
+// not just 'a'. ValidateSyllableState is called on the speculative buffer so the
+// recovery condition is purely "speculative result is Valid" — vowel-agnostic.
+TEST_F(CombinedEngineSpellTest, T5_ToneReplaceAfterCoda_E) {
+    // kefcs: k-e-f-c-s → kè coda → kèc invalid (huyền+stop) → 's' replaces → kéc.
+    // Note: 'cefcs' would fail because c/k/qu onset rule blocks 'c+e' (use 'k+e').
+    TypeString(*engine_, L"kefcs");
+    EXPECT_EQ(engine_->Peek(), L"kéc");
+}
+
+TEST_F(CombinedEngineSpellTest, T5_ToneReplaceAfterCoda_O) {
+    // cofcs: c-o-f-c-s → còc invalid → 's' replaces huyền with sắc → cóc (real word: "frog").
+    TypeString(*engine_, L"cofcs");
+    EXPECT_EQ(engine_->Peek(), L"cóc");
+}
+
+TEST_F(CombinedEngineSpellTest, T5_ToneReplaceAfterCoda_OO) {
+    // cooft → coo→ô, f huyền → cồt invalid (huyền+stop) → s replaces → cốt (real word: "core").
+    TypeString(*engine_, L"coofts");
+    EXPECT_EQ(engine_->Peek(), L"cốt");
 }
 
 }  // namespace

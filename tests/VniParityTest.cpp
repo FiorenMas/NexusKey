@@ -1,5 +1,5 @@
-// NexusKey - VNI Parity Tests (TypingEngine with InputMethod::VNI)
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - VNI Parity Tests (TypingEngine with InputMethod::VNI)
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/engine/TypingEngine.h"
@@ -14,6 +14,7 @@ class VniParityTest : public ::testing::Test {
 protected:
     void SetUp() override {
         config_.inputMethod = InputMethod::VNI;
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -246,6 +247,21 @@ TEST_F(VniParityTest, Tone_Dot_5) {
     EXPECT_EQ(engine_->Peek(), L"ạ");
 }
 
+TEST_F(VniParityTest, Tone_Clear_0) {
+    TypeString(*engine_, L"ca10");
+    EXPECT_EQ(engine_->Peek(), L"ca");
+}
+
+TEST_F(VniParityTest, Tone_Clear_0_AfterCircumflex) {
+    TypeString(*engine_, L"ca610");
+    EXPECT_EQ(engine_->Peek(), L"câ");
+}
+
+TEST_F(VniParityTest, Tone_Clear_0_NoToneIsNoOp) {
+    TypeString(*engine_, L"ca0");
+    EXPECT_EQ(engine_->Peek(), L"ca0");
+}
+
 // ============================================================================
 // COMBINED MODIFIER + TONE TESTS
 // ============================================================================
@@ -387,6 +403,7 @@ protected:
         config_.autoRestoreEnabled = true;
         config_.quickConsonant = true;
         config_.inputMethod = InputMethod::VNI;
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -650,6 +667,7 @@ protected:
         config_.spellCheckEnabled = true;
         config_.autoRestoreEnabled = true;
         config_.spellExclusions = {L"kà"};
+        config_.modernOrtho = false;
         engine_ = std::make_unique<TypingEngine>(config_);
     }
 
@@ -805,6 +823,26 @@ TEST_F(VniParityTest, Seed_OverridesPreviousState) {
 TEST_F(VniParityTest, Seed_LatinOnlyWord_Succeeds) {
     EXPECT_TRUE(engine_->SeedFromText(L"system"));
     EXPECT_EQ(engine_->Peek(), L"system");
+}
+
+// ============================================================================
+// NUMERIC INTERFERENCE TESTS
+// ============================================================================
+
+TEST_F(VniParityTest, NumericInterference_E747) {
+    // Typing "E747" in VNI should NOT interpret trailing digits as tones
+    // because they follow numeric characters.
+    TypeString(*engine_, L"E747");
+    EXPECT_EQ(engine_->Peek(), L"E747");
+}
+
+TEST_F(VniParityTest, NumericInterference_Mixed) {
+    // "a1" -> "á", but "11" -> "11"
+    TypeString(*engine_, L"a1");
+    EXPECT_EQ(engine_->Peek(), L"á");
+    engine_->Reset();
+    TypeString(*engine_, L"11");
+    EXPECT_EQ(engine_->Peek(), L"11");
 }
 
 }  // namespace

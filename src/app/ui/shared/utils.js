@@ -1,4 +1,4 @@
-// NexusKey Shared JavaScript Utilities
+// VKey Shared JavaScript Utilities
 // Reusable functions for all Sciter dialogs
 
 // ============================================
@@ -390,6 +390,7 @@ function showTooltip(element) {
     var tw   = activeTooltipEl.offsetWidth  || 220;
     var th   = activeTooltipEl.offsetHeight || 60;
     var ww   = document.body.clientWidth    || 380;
+    var wh   = document.body.clientHeight   || 500;
 
     // Check if inside a .tooltip-upwards ancestor → show above
     var isUpward = false;
@@ -400,6 +401,24 @@ function showTooltip(element) {
     }
 
     var top  = isUpward ? (rect.top - th - 6) : (rect.bottom + 6);
+    
+    // Auto-flip or clamp if it overflows vertically
+    if (!isUpward && top + th > wh - 10) {
+        var topUp = rect.top - th - 6;
+        if (topUp > 10) {
+            top = topUp;
+        } else {
+            top = wh - th - 10;
+        }
+    } else if (isUpward && top < 10) {
+        var topDown = rect.bottom + 6;
+        if (topDown + th < wh - 10) {
+            top = topDown;
+        } else {
+            top = 10;
+        }
+    }
+
     var left = rect.right - tw;
     if (left < 10) left = 10;
     if (left + tw > ww - 10) left = ww - tw - 10;

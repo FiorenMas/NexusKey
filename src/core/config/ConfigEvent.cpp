@@ -1,5 +1,5 @@
-// NexusKey - Config Event Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Config Event Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ConfigEvent.h"
 #include <Windows.h>
@@ -8,7 +8,7 @@
 namespace NextKey {
 
 // Named event for config change notifications
-static constexpr wchar_t kEventName[] = L"Local\\NexusKeyConfigEvent";
+static constexpr wchar_t kEventName[] = L"Local\\VKeyConfigEvent";
 
 struct ConfigEvent::Impl {
     HANDLE hEvent = nullptr;

@@ -1,5 +1,5 @@
-// NexusKey - Shared Test Utilities
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Shared Test Utilities
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

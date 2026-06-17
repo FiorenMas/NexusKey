@@ -1,5 +1,5 @@
-// NexusKey - TSF Apps Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Apps Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "TsfAppsDialog.h"
 #include "DialogUtils.h"
@@ -19,7 +19,7 @@ namespace NextKey {
 TsfAppsDialog::TsfAppsDialog(HWND parent)
     : WindowPickerDialog({
         L"this://app/tsfapps/tsfapps.html",
-        L"NexusKey - TSF Apps",
+        L"VKey - TSF Apps",
         360, 420, parent, true, 36, 40, true
     }) {
     appList_ = ConfigManager::LoadTsfApps(ConfigManager::GetConfigPath());
@@ -97,9 +97,9 @@ bool TsfAppsDialog::handle_event(HELEMENT he, BEHAVIOR_EVENT_PARAMS& params) {
 }
 
 void TsfAppsDialog::onWindowPicked(const std::wstring& exeName) {
-    if (exeName == L"nexuskey.exe") {
-        MessageBoxW(get_hwnd(), L"Không thể thêm NexusKey vào danh sách.",
-                    L"NexusKey", MB_OK | MB_ICONWARNING);
+    if (exeName == L"vkey.exe") {
+        MessageBoxW(get_hwnd(), L"Không thể thêm VKey vào danh sách.",
+                    L"VKey", MB_OK | MB_ICONWARNING);
     } else {
         addApp(exeName);
     }
@@ -160,17 +160,13 @@ void TsfAppsDialog::importApps() {
         appList_.clear();
     }
 
-    std::string line;
-    while (std::getline(infile, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == ';') continue;
-
+    ParseConfigLines(infile, [&](const std::string& line) {
         std::wstring wName = ToLowerAscii(Utf8ToWide(line));
-        if (wName.empty()) continue;
+        if (wName.empty()) return;
         if (std::find(appList_.begin(), appList_.end(), wName) == appList_.end()) {
             appList_.push_back(wName);
         }
-    }
+    });
 
     populateList();
     persistAndSignal();
@@ -181,14 +177,14 @@ void TsfAppsDialog::exportApps() {
         get_hwnd(),
         L"Text file (*.txt)\0*.txt\0",
         L"txt",
-        L"NexusKeyTsfApps"
+        L"VKeyTsfApps"
     );
     if (path.empty()) return;
 
     std::ofstream outfile(path);
     if (!outfile.is_open()) return;
 
-    outfile << ";NexusKey TSF Apps\n";
+    outfile << ";VKey TSF Apps\n";
 
     std::vector<std::wstring> sorted = appList_;
     std::sort(sorted.begin(), sorted.end());

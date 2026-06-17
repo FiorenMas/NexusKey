@@ -1,5 +1,5 @@
-// NexusKey - Sciter Window Helper
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Sciter Window Helper
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Utilities for Sciter window effects: DWM blur, acrylic, window dragging.
 // Dark mode utilities are in system/DarkModeHelper.h

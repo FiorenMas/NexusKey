@@ -1,5 +1,5 @@
-// NexusKey - TSF Apps Dialog Header
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - TSF Apps Dialog Header
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

@@ -1,15 +1,20 @@
-// NexusKey - Configuration Manager Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Configuration Manager Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ConfigManager.h"
 #include "core/Debug.h"
+#include "core/hotkey/HotkeyLabel.h"
 
 #define TOML_HEADER_ONLY 1
 #include "toml.hpp"
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -21,13 +26,120 @@ namespace NextKey {
 
 namespace {
 
+// ─── Wave 2 (2026-05-23) — TomlFileCache ───────────────────────────────
+//
+// Lazy parse for the 7 TOML files re-read on every config bump (TODO
+// #1074). Cache keys on the UTF-8 path string; entries hold the mtime
+// at parse time + a shared_ptr<const toml::table>. If a Load() call
+// observes the same mtime as the cached entry, returns the cached
+// table — no file I/O, no parse work (~5ms saved per skipped file on
+// cold cache).
+//
+// Failure caching: a parse error caches a null table for that mtime;
+// repeated callers don't hammer the broken file until it changes.
+//
+// Thread safety: callable from main thread (settings save / dialog),
+// worker thread (ReloadFromToml drain), and startup thread (Start).
+// Internal mutex serialises map mutation. The shared_ptr<const table>
+// is RCU-style — readers hold a snapshot via the returned shared_ptr
+// even if a concurrent re-parse swaps the cache entry.
+//
+// Intra-second edit race: filesystem mtime resolution is typically
+// 1 second on FAT/exFAT and ~100ns on NTFS. On NTFS, edits within
+// the same tick window would miss; in practice each TOML write goes
+// through `WriteToml`'s rename-and-replace which always produces a
+// fresh mtime tick.
+class TomlFileCache {
+public:
+    /// Returns the cached or freshly-parsed table. nullptr on file
+    /// missing or parse error.
+    [[nodiscard]] std::shared_ptr<const toml::table> Load(const std::string& utf8Path) {
+        std::error_code ec;
+        // C++20 deprecated std::filesystem::u8path. Construct from wstring on
+        // Windows (native encoding) so non-ASCII paths work; on Linux the
+        // native encoding IS UTF-8 so direct construction from std::string
+        // is correct.
+#ifdef _WIN32
+        const std::filesystem::path fsPath(Utf8ToWide(utf8Path));
+#else
+        const std::filesystem::path fsPath(utf8Path);
+#endif
+        const auto mtime = std::filesystem::last_write_time(fsPath, ec);
+        if (ec) {
+            // File missing — drop any stale cache entry so a future
+            // re-create picks up clean.
+            std::lock_guard lk(mu_);
+            entries_.erase(utf8Path);
+            return nullptr;
+        }
+        {
+            std::lock_guard lk(mu_);
+            auto it = entries_.find(utf8Path);
+            if (it != entries_.end() && it->second.mtime == mtime) {
+                return it->second.table;  // shared_ptr copy (may be null)
+            }
+        }
+        // Re-parse. Release the cache lock during file I/O so a
+        // concurrent Load() on a different file doesn't serialise.
+        std::shared_ptr<const toml::table> parsed;
+        try {
+            parsed = std::make_shared<const toml::table>(toml::parse_file(utf8Path));
+        } catch (...) {
+            parsed = nullptr;
+        }
+        std::lock_guard lk(mu_);
+        entries_[utf8Path] = Entry{mtime, parsed};
+        return parsed;
+    }
+
+    /// Drop the cache entry for a single path. Called by `WriteToml`
+    /// after a successful rename so a subsequent `Load()` re-parses
+    /// even when filesystem mtime resolution is too coarse to tick
+    /// between a same-tick Save→Load pair (Linux ext4 1s default,
+    /// FAT/exFAT 2s, NTFS occasionally same-tick under load).
+    void Invalidate(const std::string& utf8Path) {
+        std::lock_guard lk(mu_);
+        entries_.erase(utf8Path);
+    }
+
+    /// Drop all cached entries (test helper).
+    void Clear() {
+        std::lock_guard lk(mu_);
+        entries_.clear();
+    }
+
+private:
+    struct Entry {
+        std::filesystem::file_time_type mtime;
+        std::shared_ptr<const toml::table> table;  // null = parse failed at this mtime
+    };
+    mutable std::mutex mu_;
+    std::unordered_map<std::string, Entry> entries_;
+};
+
+TomlFileCache g_tomlCache;
+
+/// Cached replacement for `toml::parse_file`. Returns a copy of the
+/// cached table on hit, fresh parse on miss. Throws to mirror the
+/// original `toml::parse_file` semantics — callers' try/catch blocks
+/// continue to handle errors uniformly without source changes.
+toml::table ParseTomlCached(const std::string& utf8Path) {
+    auto cached = g_tomlCache.Load(utf8Path);
+    if (cached) return *cached;
+    // Cache miss (file missing or parse error) — re-attempt parse so
+    // the caller sees a real toml::parse_error exception rather than
+    // swallowed details. Cheap because the cache lookup already
+    // confirmed parse failure; the second attempt fails the same way.
+    return toml::parse_file(utf8Path);
+}
+
 #ifdef _WIN32
 /// Named mutex to serialize TOML read-modify-write across processes.
 /// Prevents race where Settings deferred save overwrites Macro/ExcludedApps changes.
 class ConfigFileLock {
 public:
     ConfigFileLock() noexcept {
-        hMutex_ = CreateMutexW(nullptr, FALSE, L"Local\\NexusKeyConfigLock");
+        hMutex_ = CreateMutexW(nullptr, FALSE, L"Local\\VKeyConfigLock");
         if (hMutex_) {
             DWORD result = WaitForSingleObject(hMutex_, 5000);
             // WAIT_OBJECT_0: acquired normally
@@ -60,7 +172,11 @@ toml::table LoadExistingToml(const std::string& utf8Path) {
 /// Write TOML table to file atomically
 bool WriteToml(const std::string& utf8Path, const toml::table& tbl) {
     std::string tempPath = utf8Path + ".tmp";
+#ifdef _WIN32
+    std::ofstream file(Utf8ToWide(tempPath));
+#else
     std::ofstream file(tempPath);
+#endif
     if (!file.is_open()) return false;
     file << tbl;
     file.close();
@@ -79,6 +195,7 @@ bool WriteToml(const std::string& utf8Path, const toml::table& tbl) {
         return false;
     }
 #endif
+    g_tomlCache.Invalidate(utf8Path);
     return true;
 }
 
@@ -103,7 +220,7 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
 
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
         
         TypingConfig config;
         
@@ -117,6 +234,8 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
                     config.inputMethod = InputMethod::SimpleTelex;
                 } else if (methodStr == "combined") {
                     config.inputMethod = InputMethod::Combined;
+                } else if (methodStr == "user_defined") {
+                    config.inputMethod = InputMethod::UserDefined;
                 } else {
                     config.inputMethod = InputMethod::Telex;
                 }
@@ -129,6 +248,11 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
             }
         }
 
+        // [UserDefinedKeyMap] section
+        if (auto km = table["UserDefinedKeyMap"].as_table()) {
+            LoadCustomKeyMap(km, config);
+        }
+
         // [features] section — use node_view [] operator for safe access to optional keys
         if (auto features = table["features"].as_table()) {
             config.spellCheckEnabled = (*features)["spell_check"].value_or(false);
@@ -139,19 +263,28 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
             config.optimizeLevel = static_cast<uint8_t>(
                 (*features)["optimize_level"].value_or(0)
             );
-            config.modernOrtho = (*features)["modern_ortho"].value_or(false);
+            config.modernOrtho = (*features)["modern_ortho"].value_or(true);
             config.autoCaps = (*features)["auto_caps"].value_or(false);
             config.allowZwjf = (*features)["allow_zwjf"].value_or(false);
             config.autoRestoreEnabled = (*features)["auto_restore"].value_or(false);
-            config.tempOffByAlt = (*features)["temp_off_by_alt"].value_or(false);
+            // Default false: opt-in. Most users don't have CJK layouts active.
+            config.cjkAutoSwitch = (*features)["cjk_auto_switch"].value_or(false);
+            // v3 cleanup: `temp_off_method` / `temp_off_macro_esc` no longer
+            // loaded into TypingConfig — `MigrateLegacyHotkeysIfNeeded` reads
+            // them directly from TOML when building the registry on first run.
             config.macroEnabled = (*features)["macro_enabled"].value_or(false);
             config.macroInEnglish = (*features)["macro_in_english"].value_or(false);
             config.quickConsonant = (*features)["quick_consonant"].value_or(false);
             config.quickStartConsonant = (*features)["quick_start_consonant"].value_or(false);
             config.quickEndConsonant = (*features)["quick_end_consonant"].value_or(false);
-            config.tempOffMacroByEsc = (*features)["temp_off_macro_esc"].value_or(false);
+            // escRestoreRawEnabled kept temporarily — TSF EngineController still
+            // reads it as the ESC restore-raw gate. Phase 2: route TSF through
+            // HotkeyRegistry, then drop both the field and this loader.
+            config.escRestoreRawEnabled = (*features)["esc_restore_raw"].value_or(false);
             config.autoCapsMacro = (*features)["auto_caps_macro"].value_or(false);
             config.allowEnglishBypass = (*features)["allow_english_bypass"].value_or(false);
+            config.suggestKeepChars = (*features)["suggest_keep_chars"].value_or(false);
+            config.debugLogEnabled = (*features)["debug_log"].value_or(false);
             config.macroTriggerSpace = (*features)["macro_trigger_space"].value_or(true);
             config.macroTriggerEnter = (*features)["macro_trigger_enter"].value_or(true);
             config.macroTriggerTab = (*features)["macro_trigger_tab"].value_or(true);
@@ -168,6 +301,15 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
                     }
                 }
             }
+        }
+
+        // Hidden TOML `[debug] perf_histogram` — Phase 1 histogram gate.
+        // Lives in its own [debug] table (not [features]) so it stays out of
+        // the user-facing surface; Settings UI does not enumerate this section.
+        // Read outside the [features] block so it works even on configs that
+        // omit [features] entirely.
+        if (auto dbg = table["debug"].as_table()) {
+            config.perfHistogramEnabled = (*dbg)["perf_histogram"].value_or(false);
         }
 
         return config;
@@ -190,9 +332,19 @@ bool ConfigManager::SaveToFile(const std::wstring& path, const TypingConfig& con
         if (config.inputMethod == InputMethod::VNI) methodStr = "vni";
         else if (config.inputMethod == InputMethod::SimpleTelex) methodStr = "simple_telex";
         else if (config.inputMethod == InputMethod::Combined) methodStr = "combined";
+        else if (config.inputMethod == InputMethod::UserDefined) methodStr = "user_defined";
         input.insert_or_assign("method", methodStr);
         input.insert_or_assign("code_table", static_cast<int64_t>(config.codeTable));
         tbl.insert_or_assign("input", std::move(input));
+
+        // [UserDefinedKeyMap] section
+        toml::table km;
+        SaveCustomKeyMap(&km, config);
+        if (!km.empty()) {
+            tbl.insert_or_assign("UserDefinedKeyMap", std::move(km));
+        } else {
+            tbl.erase("UserDefinedKeyMap");
+        }
 
         // Update [features] section
         toml::table features;
@@ -206,15 +358,24 @@ bool ConfigManager::SaveToFile(const std::wstring& path, const TypingConfig& con
         features.insert_or_assign("auto_caps", config.autoCaps);
         features.insert_or_assign("allow_zwjf", config.allowZwjf);
         features.insert_or_assign("auto_restore", config.autoRestoreEnabled);
-        features.insert_or_assign("temp_off_by_alt", config.tempOffByAlt);
+        features.insert_or_assign("cjk_auto_switch", config.cjkAutoSwitch);
+        // v3 cleanup: stop writing `temp_off_method` / `temp_off_macro_esc` —
+        // HotkeyRegistry owns these triggers now. Stale entries on disk are
+        // harmless (loader ignores them) but we explicitly erase to keep
+        // config.toml lean for new saves.
+        features.erase("temp_off_method");
+        features.erase("temp_off_macro_esc");
+        features.erase("temp_off_by_alt");  // Pre-v2 legacy key
         features.insert_or_assign("macro_enabled", config.macroEnabled);
         features.insert_or_assign("macro_in_english", config.macroInEnglish);
         features.insert_or_assign("quick_consonant", config.quickConsonant);
         features.insert_or_assign("quick_start_consonant", config.quickStartConsonant);
         features.insert_or_assign("quick_end_consonant", config.quickEndConsonant);
-        features.insert_or_assign("temp_off_macro_esc", config.tempOffMacroByEsc);
+        features.insert_or_assign("esc_restore_raw", config.escRestoreRawEnabled);
         features.insert_or_assign("auto_caps_macro", config.autoCapsMacro);
         features.insert_or_assign("allow_english_bypass", config.allowEnglishBypass);
+        features.insert_or_assign("suggest_keep_chars", config.suggestKeepChars);
+        features.insert_or_assign("debug_log", config.debugLogEnabled);
         features.insert_or_assign("macro_trigger_space", config.macroTriggerSpace);
         features.insert_or_assign("macro_trigger_enter", config.macroTriggerEnter);
         features.insert_or_assign("macro_trigger_tab", config.macroTriggerTab);
@@ -242,7 +403,7 @@ std::wstring ConfigManager::GetConfigPath() {
         return exeDir + L"\\config.toml";
     }
     
-    // Fallback: %APPDATA%/NexusKey/
+    // Fallback: %APPDATA%/VKey/
     std::wstring appDataDir = GetAppDataDirectory();
     return appDataDir + L"\\config.toml";
 }
@@ -278,11 +439,11 @@ std::wstring ConfigManager::GetAppDataDirectory() {
     wchar_t path[MAX_PATH] = {0};
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path))) {
         std::wstring appData(path);
-        std::wstring nexusKeyDir = appData + L"\\NexusKey";
-        
+        std::wstring vkeyDir = appData + L"\\VKey";
+
         // Create directory if it doesn't exist
-        CreateDirectoryW(nexusKeyDir.c_str(), nullptr);
-        return nexusKeyDir;
+        CreateDirectoryW(vkeyDir.c_str(), nullptr);
+        return vkeyDir;
     }
 #endif
     return L".";
@@ -291,7 +452,7 @@ std::wstring ConfigManager::GetAppDataDirectory() {
 bool ConfigManager::DirectoryWritable(const std::wstring& path) {
 #ifdef _WIN32
     // Try to create a temp file
-    std::wstring testFile = path + L"\\__nexuskey_test_write__.tmp";
+    std::wstring testFile = path + L"\\__vkey_test_write__.tmp";
     HANDLE hFile = CreateFileW(
         testFile.c_str(),
         GENERIC_WRITE,
@@ -312,7 +473,7 @@ bool ConfigManager::DirectoryWritable(const std::wstring& path) {
 std::optional<UIConfig> ConfigManager::LoadUIConfig(const std::wstring& path) {
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         UIConfig config;
 
@@ -361,22 +522,26 @@ UIConfig ConfigManager::LoadUIConfigOrDefault() {
 std::optional<HotkeyConfig> ConfigManager::LoadHotkeyConfig(const std::wstring& path) {
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         HotkeyConfig config;
 
         if (auto hotkey = table["hotkey"].as_table()) {
-            config.ctrl = (*hotkey)["ctrl"].value_or(true);
+            config.ctrl  = (*hotkey)["ctrl"].value_or(true);
             config.shift = (*hotkey)["shift"].value_or(true);
-            config.alt = (*hotkey)["alt"].value_or(false);
-            config.win = (*hotkey)["win"].value_or(false);
+            config.alt   = (*hotkey)["alt"].value_or(false);
+            config.win   = (*hotkey)["win"].value_or(false);
 
-            auto keyStr = (*hotkey)["key"].value_or<std::string>("");
-            if (!keyStr.empty()) {
-                auto wideKey = Utf8ToWide(keyStr);
-                config.key = wideKey.empty() ? 0 : towupper(wideKey[0]);
+            if (auto vkNode = (*hotkey)["vk"]; vkNode.is_integer()) {
+                config.vk = static_cast<uint32_t>(vkNode.value_or<int64_t>(0));
             } else {
-                config.key = 0;
+                // Legacy schema (pre-2026-05): `key = "Z"`. See LegacyKeyCharToVk
+                // docs — A-Z/0-9 migrate cleanly, anything else drops to 0 and
+                // user rebinds via the new capture overlay.
+                auto keyStr = (*hotkey)["key"].value_or<std::string>("");
+                if (!keyStr.empty()) {
+                    config.vk = LegacyKeyCharToVk(Utf8ToWide(keyStr));
+                }
             }
         }
 
@@ -393,17 +558,13 @@ bool ConfigManager::SaveHotkeyConfig(const std::wstring& path, const HotkeyConfi
         auto tbl = LoadExistingToml(utf8Path);
 
         toml::table hotkey;
-        hotkey.insert_or_assign("ctrl", config.ctrl);
+        hotkey.insert_or_assign("ctrl",  config.ctrl);
         hotkey.insert_or_assign("shift", config.shift);
-        hotkey.insert_or_assign("alt", config.alt);
-        hotkey.insert_or_assign("win", config.win);
-
-        if (config.key != 0) {
-            std::wstring wkey(1, config.key);
-            hotkey.insert_or_assign("key", WideToUtf8(wkey));
-        } else {
-            hotkey.insert_or_assign("key", "");
-        }
+        hotkey.insert_or_assign("alt",   config.alt);
+        hotkey.insert_or_assign("win",   config.win);
+        // New schema: write `vk` as integer. Legacy `key = "..."` is dropped
+        // when we replace the sub-table below.
+        hotkey.insert_or_assign("vk", static_cast<int64_t>(config.vk));
 
         tbl.insert_or_assign("hotkey", std::move(hotkey));
 
@@ -419,14 +580,208 @@ HotkeyConfig ConfigManager::LoadHotkeyConfigOrDefault() {
     if (config) {
         return *config;
     }
-    return HotkeyConfig{};  // Default: Ctrl+Shift
+    // No config file → empty binding (all flags false, vk=0). The
+    // "Ctrl+Shift default" only kicks in when the file exists but the
+    // ctrl/shift fields are missing inside [hotkey] (see value_or(true)
+    // calls above). User must configure on fresh install.
+    return HotkeyConfig{};
+}
+
+// ─────────────────────────── Unified HotkeyRegistry ──────────────────────
+// Stored as `[[hotkeys]]` array-of-tables (distinct from `[hotkey]` table
+// used by the V/E toggle config above). Each entry: { intent = "...", trigger = { vk, mods, double_tap? } }.
+
+std::optional<HotkeyRegistry> ConfigManager::LoadHotkeyRegistry(const std::wstring& path) {
+    try {
+        std::string utf8Path = WideToUtf8(path);
+        auto table = ParseTomlCached(utf8Path);
+
+        HotkeyRegistry registry;
+        if (auto arr = table["hotkeys"].as_array()) {
+            registry.Load(*arr);
+        }
+        if (auto stateTbl = table["hotkey_state"].as_table()) {
+            registry.LoadEnabled(*stateTbl);
+        }
+        // Sections missing is NOT a failure — caller decides defaults vs. empty.
+        return registry;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool ConfigManager::SaveHotkeyRegistry(const std::wstring& path, const HotkeyRegistry& registry) {
+    try {
+        ConfigFileLock lock;
+        std::string utf8Path = WideToUtf8(path);
+        auto tbl = LoadExistingToml(utf8Path);
+
+        toml::array arr;
+        registry.Save(arr);
+        tbl.insert_or_assign("hotkeys", std::move(arr));
+
+        toml::table state;
+        registry.SaveEnabled(state);
+        tbl.insert_or_assign("hotkey_state", std::move(state));
+
+        // TSF mirror: TSF EngineController gates ESC restore-raw on
+        // SharedState ESC_RESTORE_RAW, populated from
+        // [features].esc_restore_raw via TypingConfig. Without this sync,
+        // disabling cancel-composition in the Hotkeys UI doesn't propagate
+        // to TSF hosts (Word, Edge in TSF mode, etc.) — TSF would keep
+        // restoring raw keys on Esc. Mirror reflects "Esc bare-tap is bound
+        // to CancelComposition AND the intent is enabled".
+        // Phase 2: route TSF through HotkeyRegistry directly and drop both
+        // the mirror and the legacy field.
+        constexpr uint32_t kVkEscape = 0x1B;
+        const bool escIsCancelTrigger = registry.Matches(
+            Intent::CancelComposition, kVkEscape, /*mods=*/0,
+            /*isDoubleTap=*/false, /*keyUp=*/false);
+        if (auto* features = tbl["features"].as_table()) {
+            features->insert_or_assign("esc_restore_raw", escIsCancelTrigger);
+        } else {
+            toml::table newFeatures;
+            newFeatures.insert_or_assign("esc_restore_raw", escIsCancelTrigger);
+            tbl.insert_or_assign("features", std::move(newFeatures));
+        }
+
+        return WriteToml(utf8Path, tbl);
+    } catch (...) {
+        return false;
+    }
+}
+
+namespace {
+
+// "User has touched the v3 schema" sentinel — presence of `[hotkey_state]`
+// in config.toml. SaveHotkeyRegistry always writes it, so once the user has
+// opened the Hotkeys dialog or migration ran, this returns true on disk.
+// Used by both LoadHotkeyRegistryOrDefault and MigrateLegacyHotkeysIfNeeded
+// to distinguish "fresh / pre-v3 install" from "user explicitly cleared".
+[[nodiscard]] bool HasHotkeyStateSection(const std::wstring& path) noexcept {
+    try {
+        auto table = ParseTomlCached(WideToUtf8(path));
+        return table.contains("hotkey_state");
+    } catch (...) {
+        return false;
+    }
+}
+
+}  // namespace
+
+HotkeyRegistry ConfigManager::LoadHotkeyRegistryOrDefault() {
+    const std::wstring configPath = GetConfigPath();
+    auto registry = LoadHotkeyRegistry(configPath);
+    if (!registry) {
+        return HotkeyRegistry::Defaults();
+    }
+    // If the user has the v3 schema on disk, honor what's there — including an
+    // explicit empty registry (= "I cleared everything intentionally").
+    if (HasHotkeyStateSection(configPath)) {
+        return *registry;
+    }
+    // No state section → never-touched-new-UI install. Empty result here means
+    // either fresh install or pre-v3 with no [[hotkeys]] — both cases want
+    // factory bindings as the UI's starting state.
+    const bool empty =
+        registry->TriggersFor(Intent::CancelComposition).empty() &&
+        registry->TriggersFor(Intent::SkipMacro).empty() &&
+        registry->TriggersFor(Intent::ToggleEnabled).empty();
+    if (empty) {
+        return HotkeyRegistry::Defaults();
+    }
+    return *registry;
+}
+
+namespace {
+
+/// Read the 3 pre-v3 hotkey toggles from the `[features]` TOML table without
+/// going through TypingConfig (those fields were dropped in v3 cleanup).
+/// Returns all-default values when file/section is unreadable.
+struct LegacyHotkeyToggles {
+    bool    escRestoreRaw    = false;
+    bool    tempOffMacroEsc  = false;
+    uint8_t tempOffMethod    = 0;  // 0=None, 1=DupAlt, 2=Ctrl
+};
+
+[[nodiscard]] LegacyHotkeyToggles ReadLegacyHotkeyToggles(const std::wstring& path) noexcept {
+    LegacyHotkeyToggles out;
+    try {
+        auto table = ParseTomlCached(WideToUtf8(path));
+        if (auto features = table["features"].as_table()) {
+            out.escRestoreRaw   = (*features)["esc_restore_raw"].value_or(false);
+            out.tempOffMacroEsc = (*features)["temp_off_macro_esc"].value_or(false);
+            if (auto m = (*features)["temp_off_method"].value<int64_t>()) {
+                int v = static_cast<int>(*m);
+                if (v >= 0 && v <= 2) out.tempOffMethod = static_cast<uint8_t>(v);
+            } else if ((*features)["temp_off_by_alt"].value_or(false)) {
+                // Pre-v2 fallback key.
+                out.tempOffMethod = 1;  // DupAlt
+            }
+        }
+    } catch (...) {
+        // Defaults already set on `out`.
+    }
+    return out;
+}
+
+}  // namespace
+
+HotkeyRegistry ConfigManager::MigrateLegacyHotkeysIfNeeded(const std::wstring& path) {
+    // Fresh install (no config file) → factory defaults, nothing to persist.
+    if (!std::filesystem::exists(path)) {
+        return HotkeyRegistry::Defaults();
+    }
+
+    // User has v3 schema on disk → honor as-is, including explicit empty.
+    // SaveHotkeyRegistry writes `[hotkey_state]` on every save, so anyone who
+    // has used the new Hotkeys UI passes through here without further migration.
+    if (HasHotkeyStateSection(path)) {
+        return LoadHotkeyRegistry(path).value_or(HotkeyRegistry{});
+    }
+
+    // [hotkey_state] missing → pre-v3 install. If existing bindings sit in the
+    // [[hotkeys]] array (e.g., from earlier buggy persists or partial migration),
+    // honor them. Otherwise fall through to legacy-field migration.
+    auto existing = LoadHotkeyRegistry(path);
+    const bool populated = existing && (
+        !existing->TriggersFor(Intent::CancelComposition).empty() ||
+        !existing->TriggersFor(Intent::SkipMacro).empty() ||
+        !existing->TriggersFor(Intent::ToggleEnabled).empty());
+    if (populated) {
+        return *existing;
+    }
+
+    // Empty registry on disk (either `[[hotkeys]]` absent OR present-but-empty).
+    // Without a distinguishing sentinel we can't tell "explicit user clear"
+    // from "leftover from a buggy earlier persist" — and the latter actually
+    // happened in pre-758f2b4 builds. Pragmatic v1 choice: derive from legacy
+    // toggles, fall back to Defaults() when legacy fields are all at v2 defaults.
+    // The UI then matches what runtime fires; users who genuinely want "no
+    // shortcuts" can delete each binding individually (a future schema sentinel
+    // can recover the explicit-clear semantic).
+    const auto legacy = ReadLegacyHotkeyToggles(path);
+    const bool legacyAllDefault = !legacy.escRestoreRaw
+                               && !legacy.tempOffMacroEsc
+                               && legacy.tempOffMethod == 0;
+    auto migrated = legacyAllDefault
+        ? HotkeyRegistry::Defaults()
+        : HotkeyRegistry::FromLegacyFields(
+              legacy.escRestoreRaw, legacy.tempOffMacroEsc, legacy.tempOffMethod);
+    NEXTKEY_LOG(L"[ConfigManager] Migrated v2→v3 hotkeys (esc=%d macro=%d method=%u legacyDefault=%d)",
+                legacy.escRestoreRaw, legacy.tempOffMacroEsc,
+                static_cast<unsigned>(legacy.tempOffMethod), legacyAllDefault);
+    if (!SaveHotkeyRegistry(path, migrated)) {
+        NEXTKEY_LOG(L"[ConfigManager] Failed to persist migrated hotkeys to %s", path.c_str());
+    }
+    return migrated;
 }
 
 std::vector<std::wstring> ConfigManager::LoadAllExcludedApps(const std::wstring& path) {
     std::vector<std::wstring> apps;
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         if (auto section = table["excluded_apps"].as_table()) {
             // Load [excluded_apps].list
@@ -466,9 +821,17 @@ bool ConfigManager::SaveExcludedApps(const std::wstring& path,
         for (auto& app : apps) {
             arr.push_back(WideToUtf8(app));
         }
-        toml::table section;
-        section.insert_or_assign("list", std::move(arr));
-        tbl.insert_or_assign("excluded_apps", std::move(section));
+        // Read-modify-write the [excluded_apps] section so the sibling
+        // `force_vn` array (per-app hard-V list) survives an E-list save.
+        // Drop the legacy `soft` key — it is merged into `list` on load.
+        if (auto* section = tbl["excluded_apps"].as_table()) {
+            section->insert_or_assign("list", std::move(arr));
+            section->erase("soft");
+        } else {
+            toml::table newSection;
+            newSection.insert_or_assign("list", std::move(arr));
+            tbl.insert_or_assign("excluded_apps", std::move(newSection));
+        }
 
         return WriteToml(utf8Path, tbl);
     } catch (...) {
@@ -476,14 +839,15 @@ bool ConfigManager::SaveExcludedApps(const std::wstring& path,
     }
 }
 
-std::vector<std::wstring> ConfigManager::LoadEnglishModeApps(const std::wstring& path) {
+std::vector<std::wstring> ConfigManager::LoadForcedVnApps(const std::wstring& path) {
     std::vector<std::wstring> apps;
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
-        if (auto section = table["smart_switch"].as_table()) {
-            if (auto arr = (*section)["english_mode_apps"].as_array()) {
+        // [excluded_apps].force_vn — apps locked to Vietnamese (hard-V).
+        if (auto section = table["excluded_apps"].as_table()) {
+            if (auto arr = (*section)["force_vn"].as_array()) {
                 for (auto& item : *arr) {
                     if (apps.size() >= kMaxAppListEntries) break;
                     if (auto str = item.value<std::string>()) {
@@ -496,8 +860,8 @@ std::vector<std::wstring> ConfigManager::LoadEnglishModeApps(const std::wstring&
     return apps;
 }
 
-bool ConfigManager::SaveEnglishModeApps(const std::wstring& path,
-                                         const std::vector<std::wstring>& apps) {
+bool ConfigManager::SaveForcedVnApps(const std::wstring& path,
+                                      const std::vector<std::wstring>& apps) {
     try {
         ConfigFileLock lock;
         std::string utf8Path = WideToUtf8(path);
@@ -507,9 +871,116 @@ bool ConfigManager::SaveEnglishModeApps(const std::wstring& path,
         for (auto& app : apps) {
             arr.push_back(WideToUtf8(app));
         }
-        toml::table section;
-        section.insert_or_assign("english_mode_apps", std::move(arr));
-        tbl.insert_or_assign("smart_switch", std::move(section));
+        // Read-modify-write so the sibling `list` (E) array survives a V save.
+        if (auto* section = tbl["excluded_apps"].as_table()) {
+            section->insert_or_assign("force_vn", std::move(arr));
+        } else {
+            toml::table newSection;
+            newSection.insert_or_assign("force_vn", std::move(arr));
+            tbl.insert_or_assign("excluded_apps", std::move(newSection));
+        }
+
+        return WriteToml(utf8Path, tbl);
+    } catch (...) {
+        return false;
+    }
+}
+
+std::unordered_map<std::wstring, bool>
+ConfigManager::LoadSmartSwitchApps(const std::wstring& path) {
+    std::unordered_map<std::wstring, bool> apps;
+    try {
+        std::string utf8Path = WideToUtf8(path);
+        auto table = ParseTomlCached(utf8Path);
+
+        auto lower = [](std::wstring s) {
+            for (auto& c : s) c = static_cast<wchar_t>(towlower(c));
+            return s;
+        };
+
+        // 1. V2 schema: [smart_switch.apps] inline map.
+        if (auto smart = table["smart_switch"].as_table()) {
+            if (auto appsTbl = (*smart)["apps"].as_table()) {
+                bool warnedUnknown = false;
+                bool warnedCap = false;
+                for (const auto& [keyView, node] : *appsTbl) {
+                    if (apps.size() >= kMaxAppListEntries) {
+                        if (!warnedCap) {
+                            NEXTKEY_LOG(L"[ConfigManager] LoadSmartSwitchApps: cap %zu hit, surplus dropped",
+                                        kMaxAppListEntries);
+                            warnedCap = true;
+                        }
+                        break;
+                    }
+                    auto modeStr = node.value<std::string>();
+                    if (!modeStr) continue;
+                    bool isVietnamese;
+                    if (*modeStr == "english")          isVietnamese = false;
+                    else if (*modeStr == "vietnamese")  isVietnamese = true;
+                    else {
+                        if (!warnedUnknown) {
+                            NEXTKEY_LOG(L"[ConfigManager] LoadSmartSwitchApps: unknown mode string, entry skipped");
+                            warnedUnknown = true;
+                        }
+                        continue;
+                    }
+                    auto wideKey = lower(Utf8ToWide(std::string(keyView.str())));
+                    if (wideKey.empty()) continue;
+                    apps.emplace(std::move(wideKey), isVietnamese);
+                }
+                return apps;
+            }
+
+            // 2. Legacy fallback: [smart_switch].english_mode_apps array.
+            //    One-time silent migration — first save will emit V2 schema
+            //    and the legacy section is dropped on full-rewrite.
+            if (auto arr = (*smart)["english_mode_apps"].as_array()) {
+                for (auto& item : *arr) {
+                    if (apps.size() >= kMaxAppListEntries) break;
+                    if (auto str = item.value<std::string>()) {
+                        auto wideKey = lower(Utf8ToWide(*str));
+                        if (!wideKey.empty()) apps.emplace(std::move(wideKey), false);
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        // 3. Parse error / missing file → empty map (never throw to caller).
+    }
+    return apps;
+}
+
+bool ConfigManager::SaveSmartSwitchApps(
+    const std::wstring& path,
+    const std::unordered_map<std::wstring, bool>& apps) {
+    try {
+        ConfigFileLock lock;
+        std::string utf8Path = WideToUtf8(path);
+        auto tbl = LoadExistingToml(utf8Path);
+
+        // Sort keys alphabetically for deterministic output (clean diffs).
+        std::vector<const std::wstring*> sorted;
+        sorted.reserve(apps.size());
+        for (const auto& [k, _] : apps) sorted.push_back(&k);
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const std::wstring* a, const std::wstring* b) {
+                      return *a < *b;
+                  });
+
+        toml::table appsTbl;
+        for (const auto* keyPtr : sorted) {
+            auto it = apps.find(*keyPtr);
+            if (it == apps.end()) continue;
+            appsTbl.insert(WideToUtf8(*keyPtr),
+                           std::string(it->second ? "vietnamese" : "english"));
+        }
+
+        // Replace the entire [smart_switch] subtable. This drops the legacy
+        // `english_mode_apps` array on first save after migration (clean
+        // break per anh's 2026-05-28 decision).
+        toml::table smartSection;
+        smartSection.insert("apps", std::move(appsTbl));
+        tbl.insert_or_assign("smart_switch", std::move(smartSection));
 
         return WriteToml(utf8Path, tbl);
     } catch (...) {
@@ -521,7 +992,7 @@ std::vector<std::wstring> ConfigManager::LoadTsfApps(const std::wstring& path) {
     std::vector<std::wstring> apps;
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         if (auto section = table["tsf_apps"].as_table()) {
             if (auto arr = (*section)["list"].as_array()) {
@@ -561,7 +1032,7 @@ std::unordered_map<std::wstring, AppOverrideEntry> ConfigManager::LoadAppOverrid
     std::unordered_map<std::wstring, AppOverrideEntry> data;
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         size_t entryCount = 0;
 
@@ -576,6 +1047,7 @@ std::unordered_map<std::wstring, AppOverrideEntry> ConfigManager::LoadAppOverrid
                     AppOverrideEntry e;
                     e.inputMethod = static_cast<int8_t>((*entry)["input_method"].value_or(-1));
                     e.encodingOverride = static_cast<int8_t>((*entry)["encoding"].value_or(-1));
+                    e.sendMethod = static_cast<int8_t>((*entry)["send_method"].value_or(-1));
                     data[Utf8ToWide(std::string(key.str()))] = e;
                 }
             }
@@ -596,6 +1068,7 @@ bool ConfigManager::SaveAppOverrides(const std::wstring& path,
             toml::table entry;
             entry.insert_or_assign("input_method", static_cast<int64_t>(e.inputMethod));
             entry.insert_or_assign("encoding", static_cast<int64_t>(e.encodingOverride));
+            entry.insert_or_assign("send_method", static_cast<int64_t>(e.sendMethod));
             section.insert_or_assign(WideToUtf8(exe), std::move(entry));
         }
         tbl.insert_or_assign("app_overrides", std::move(section));
@@ -609,7 +1082,7 @@ bool ConfigManager::SaveAppOverrides(const std::wstring& path,
 std::optional<SystemConfig> ConfigManager::LoadSystemConfig(const std::wstring& path) {
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         SystemConfig config;
 
@@ -628,6 +1101,7 @@ std::optional<SystemConfig> ConfigManager::LoadSystemConfig(const std::wstring& 
             config.autoCheckUpdate = (*system)["auto_check_update"].value_or(true);
             config.startupMode = static_cast<uint8_t>((*system)["startup_mode"].value_or(0));
             config.forceLightTheme = (*system)["force_light_theme"].value_or(false);
+            config.watchdogEnabled = (*system)["watchdog_enabled"].value_or(false);
         }
 
         return config;
@@ -657,6 +1131,7 @@ bool ConfigManager::SaveSystemConfig(const std::wstring& path, const SystemConfi
         system.insert_or_assign("auto_check_update", config.autoCheckUpdate);
         system.insert_or_assign("startup_mode", static_cast<int64_t>(config.startupMode));
         system.insert_or_assign("force_light_theme", config.forceLightTheme);
+        system.insert_or_assign("watchdog_enabled", config.watchdogEnabled);
         tbl.insert_or_assign("system", std::move(system));
 
         return WriteToml(utf8Path, tbl);
@@ -677,7 +1152,7 @@ SystemConfig ConfigManager::LoadSystemConfigOrDefault() {
 std::optional<ConvertConfig> ConfigManager::LoadConvertConfig(const std::wstring& path) {
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         ConvertConfig config;
 
@@ -698,15 +1173,22 @@ std::optional<ConvertConfig> ConfigManager::LoadConvertConfig(const std::wstring
 
             // Nested [convert.hotkey] table
             if (auto hk = (*convert)["hotkey"].as_table()) {
-                config.hotkey.ctrl = (*hk)["ctrl"].value_or(false);
+                config.hotkey.ctrl  = (*hk)["ctrl"].value_or(false);
                 config.hotkey.shift = (*hk)["shift"].value_or(false);
-                config.hotkey.alt = (*hk)["alt"].value_or(false);
-                config.hotkey.win = (*hk)["win"].value_or(false);
+                config.hotkey.alt   = (*hk)["alt"].value_or(false);
+                config.hotkey.win   = (*hk)["win"].value_or(false);
 
-                auto keyStr = (*hk)["key"].value_or<std::string>("");
-                if (!keyStr.empty()) {
-                    auto wideKey = Utf8ToWide(keyStr);
-                    config.hotkey.key = wideKey.empty() ? 0 : towupper(wideKey[0]);
+                // New schema: `vk = <integer VK_*>`. Preferred.
+                if (auto vkNode = (*hk)["vk"]; vkNode.is_integer()) {
+                    config.hotkey.vk = static_cast<uint32_t>(vkNode.value_or<int64_t>(0));
+                } else {
+                    // Legacy schema (pre-2026-05): `key = "Z"` (single char).
+                    // Clean migration — A-Z/0-9 only; OEM punctuation drops to
+                    // vk=0 and user must rebind via new capture overlay.
+                    auto keyStr = (*hk)["key"].value_or<std::string>("");
+                    if (!keyStr.empty()) {
+                        config.hotkey.vk = LegacyKeyCharToVk(Utf8ToWide(keyStr));
+                    }
                 }
             }
         }
@@ -742,12 +1224,10 @@ bool ConfigManager::SaveConvertConfig(const std::wstring& path, const ConvertCon
         hotkey.insert_or_assign("alt", config.hotkey.alt);
         hotkey.insert_or_assign("win", config.hotkey.win);
 
-        if (config.hotkey.key != 0) {
-            std::wstring wkey(1, config.hotkey.key);
-            hotkey.insert_or_assign("key", WideToUtf8(wkey));
-        } else {
-            hotkey.insert_or_assign("key", "");
-        }
+        // New schema: write `vk` as integer. The legacy `key = "..."` field
+        // (pre-2026-05 schema) is dropped automatically because we replace the
+        // entire `hotkey` sub-table below — no need to explicitly erase it.
+        hotkey.insert_or_assign("vk", static_cast<int64_t>(config.hotkey.vk));
 
         convert.insert_or_assign("hotkey", std::move(hotkey));
         tbl.insert_or_assign("convert", std::move(convert));
@@ -780,7 +1260,7 @@ std::unordered_map<std::wstring, std::wstring> ConfigManager::LoadMacros(const s
     }
     try {
         std::string utf8Path = WideToUtf8(path);
-        auto table = toml::parse_file(utf8Path);
+        auto table = ParseTomlCached(utf8Path);
 
         if (auto section = table["macros"].as_table()) {
             for (auto& [key, val] : *section) {
@@ -816,6 +1296,62 @@ bool ConfigManager::SaveMacros(const std::wstring& path,
     } catch (...) {
         return false;
     }
+}
+
+void ConfigManager::LoadCustomKeyMap(const void* table_ptr, TypingConfig& config) {
+    const auto* km = static_cast<const toml::table*>(table_ptr);
+    if (!km) return;
+
+    for (auto& [key, val] : *km) {
+        if (key.str().empty()) continue;
+        wchar_t k = static_cast<wchar_t>(key.str()[0]);
+        if (k >= 128) continue;
+
+        if (auto actionStr = val.value<std::string>()) {
+            config.customKeyMap[static_cast<uint8_t>(k)] = StringToTypingAction(*actionStr);
+        }
+    }
+}
+
+void ConfigManager::SaveCustomKeyMap(void* table_ptr, const TypingConfig& config) {
+    auto* km = static_cast<toml::table*>(table_ptr);
+    if (!km) return;
+
+    for (size_t i = 0; i < 128; ++i) {
+        TypingAction action = config.customKeyMap[i];
+        if (action != TypingAction::None) {
+            char key[2] = { static_cast<char>(i), '\0' };
+            km->insert_or_assign(key, std::string(TypingActionToString(action)));
+        }
+    }
+}
+
+bool ConfigManager::ImportCustomKeyMap(const std::wstring& path, TypingConfig& config) {
+    try {
+        auto tbl = ParseTomlCached(WideToUtf8(path));
+        LoadCustomKeyMap(&tbl, config);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ConfigManager::ExportCustomKeyMap(const std::wstring& path, const TypingConfig& config) {
+    try {
+        toml::table tbl;
+        SaveCustomKeyMap(&tbl, config);
+#ifdef _WIN32
+        std::ofstream file(path);
+#else
+        std::ofstream file(WideToUtf8(path));
+#endif
+        if (file.is_open()) {
+            file << tbl;
+            file.close();
+            return true;
+        }
+    } catch (...) {}
+    return false;
 }
 
 }  // namespace NextKey

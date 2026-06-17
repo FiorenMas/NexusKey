@@ -1,5 +1,5 @@
-// NexusKey Classic — Macro Table Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Macro Table Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicMacroTableDialog.h"
 #include "core/config/ConfigManager.h"
@@ -77,8 +77,8 @@ bool ClassicMacroTableDialog::Init(HINSTANCE hInstance, HWND parent, bool forceL
     RECT rc = {0, 0, w, h};
     AdjustWindowRectEx(&rc, style, FALSE, WS_EX_TOPMOST);
     int aw = rc.right - rc.left, ah = rc.bottom - rc.top;
-    int sx = GetSystemMetrics(SM_CXSCREEN), sy = GetSystemMetrics(SM_CYSCREEN);
-    SetWindowPos(hwnd_, nullptr, (sx - aw) / 2, (sy - ah) / 2, aw, ah, SWP_NOZORDER);
+    POINT pt = NextKey::GetCenteredPos(hwnd_, aw, ah);
+    SetWindowPos(hwnd_, nullptr, pt.x, pt.y, aw, ah, SWP_NOZORDER);
 
     theme_.Init(hwnd_, forceLightTheme);
     theme_.ApplyWindowAttributes(hwnd_);
@@ -336,20 +336,16 @@ void ClassicMacroTableDialog::ImportFromFile() {
 
     if (choice == IDYES) macros_.clear();
 
-    std::string line;
-    while (std::getline(file, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == ';') continue;
-
+    ParseConfigLines(file, [&](const std::string& line) {
         auto colonPos = line.find(':');
-        if (colonPos == std::string::npos || colonPos == 0) continue;
+        if (colonPos == std::string::npos || colonPos == 0) return;
 
         std::wstring k = Utf8ToWide(line.substr(0, colonPos));
         std::wstring v = Utf8ToWide(line.substr(colonPos + 1));
         if (!k.empty() && !v.empty() && k.size() <= 32 && v.size() <= 20480) {
             macros_[k] = v;
         }
-    }
+    });
 
     PopulateList();
     SaveData();

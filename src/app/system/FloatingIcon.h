@@ -1,5 +1,5 @@
-// NexusKey - Floating V/E Icon Overlay
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Floating V/E Icon Overlay
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 

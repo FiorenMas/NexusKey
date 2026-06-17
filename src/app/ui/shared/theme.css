@@ -1,4 +1,4 @@
-/* NexusKey Theme - Pastel Frosted Glass Edition */
+/* VKey Theme - Pastel Frosted Glass Edition */
 
 :root {
     /* Primary Brand Colors (stronger blue for contrast) */
@@ -18,15 +18,19 @@
     /* Toggle Switch Colors */
     --toggle-off-bg: #9CA3AF;
     /* Darker gray for better visibility */
-    --toggle-on-bg: #F2A8A3;
-    /* warm pastel for default toggles */
+    /* --toggle-on-bg: #F2A8A3; */
+    /* warm pastel for default toggles (pink — disabled, synced to blue) */
+    --toggle-on-bg: rgba(59, 130, 246, 0.85);
+    /* blue — synced with dark mode */
     --toggle-thumb-bg: white;
     --toggle-label-off: #4A4A4A;
     --toggle-label-on: white;
 
     /* V/E Language Toggle (clean pastel identity) */
-    --toggle-ve-bg: #F7B7B5;
-    /* Vietnamese: coral-pastel */
+    /* --toggle-ve-bg: #F7B7B5; */
+    /* Vietnamese: coral-pastel (pink — disabled, synced to blue) */
+    --toggle-ve-bg: rgba(220, 80, 80, 0.85);
+    /* Vietnamese: red (synced with dark mode) */
     --toggle-ve-bg-english: #AFCFFB;
     /* English: sky-pastel */
     --toggle-ve-text-v: #2E2E2E;

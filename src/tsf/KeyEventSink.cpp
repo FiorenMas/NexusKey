@@ -1,10 +1,11 @@
-// NexusKey - Key Event Sink Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Key Event Sink Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "KeyEventSink.h"
 #include "TextService.h"
 #include "EngineController.h"
+#include "CompositionEditSession.h"
 #include "ComUtils.h"
 #include "Define.h"
 
@@ -114,15 +115,26 @@ IFACEMETHODIMP KeyEventSink::OnSetFocus(BOOL fForeground) {
         if (pEngineController_) {
             pEngineController_->CheckConfigEvent();
             pEngineController_->RefreshFlags();
+            // Publish TIP active state — EXE reads this for tray icon sync
+            pEngineController_->SetTsfTipActive(true);
+            // Focus change invalidates the commit-undo window — cursor may have
+            // moved arbitrarily relative to the cached lastCommit_ text.
+            pEngineController_->ResetCommitUndo();
         }
     } else {
         TSF_LOG(L"OnSetFocus: background");
+        if (pEngineController_) {
+            pEngineController_->SetTsfTipActive(false);
+            pEngineController_->ResetCommitUndo();
+        }
     }
     return S_OK;
 }
 
 IFACEMETHODIMP KeyEventSink::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     if (pfEaten == nullptr) return E_INVALIDARG;
+
+    pEngineController_->CheckConfigEvent();
 
     // Drop any punct char cached by a previous OnTestKeyDown whose OnKeyDown pair
     // never fired (rare TSF anomaly).
@@ -133,6 +145,26 @@ IFACEMETHODIMP KeyEventSink::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, 
     if (pEngineController_->IsContextBlocked()) {
         *pfEaten = FALSE;
         return S_OK;
+    }
+
+    // Intercept VK_BACK for autocomplete suggestion dismissal
+    if (wParam == VK_BACK && pEngineController_->HasEngineBuffer() &&
+        pEngineController_->IsSuggestKeepCharsEnabled() &&
+        pEngineController_->HasNonEmptySelection(pContext)) {
+        TSF_LOG(L"OnTestKeyDown: backspace autocomplete suggestion detected -> commit and pass through");
+        pEngineController_->Commit(pContext);
+        *pfEaten = FALSE;
+        lastTestedVk_ = static_cast<UINT>(wParam);
+        lastWantKeyResult_ = false;
+        return S_OK;
+    }
+
+    // Commit-undo invalidation (design 2026-05-17): any key besides BS/ESC during
+    // Ready/Primed means the user has moved on — drop the cache to prevent stale
+    // restore on a later ESC. Modifier keys (Ctrl/Alt/Win/Shift) also reset; if
+    // the user is starting a chord, the undo window is over.
+    if (wParam != VK_BACK && wParam != VK_ESCAPE) {
+        pEngineController_->OnNonRestoreKey();
     }
 
     // Safety check: recover from engine/composition desync.
@@ -171,6 +203,30 @@ IFACEMETHODIMP KeyEventSink::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, 
         return S_OK;
     }
 
+    // Esc-restore-raw: end composition with the user's raw keys (víu → virus)
+    // instead of the Vietnamese form. Committing in test phase is the right
+    // pattern for action keys (per CLAUDE.md "TSF: commit-in-test-phase allowed
+    // for action keys") — no text-insert race. The same branch in OnKeyDown
+    // handles Chromium hosts that skip OnTestKeyDown.
+    //
+    // Post-BS extension (design 2026-05-17): when engine is empty but commit-undo
+    // is Primed (user typed space then BS), restore raw from lastCommit_ cache
+    // via TryRestoreLastCommitRaw.
+    if (wParam == VK_ESCAPE && pEngineController_->IsEscRestoreRawEnabled()) {
+        if (pEngineController_->HasEngineBuffer()) {
+            if (pEngineController_->CommitRawAndEnd(pContext)) {
+                *pfEaten = TRUE;
+                return S_OK;
+            }
+        } else if (pEngineController_->IsCommitUndoPrimed()
+                   && pEngineController_->WithinUndoWindow()) {
+            if (pEngineController_->TryRestoreLastCommitRaw(pContext)) {
+                *pfEaten = TRUE;
+                return S_OK;
+            }
+        }
+    }
+
     // (VK_RETURN falls through to the generic non-handled-key branch below:
     // WantKey returns false for Enter, so with a live buffer the branch commits
     // the composition and passes Enter to the host — search submits, newline
@@ -189,8 +245,8 @@ IFACEMETHODIMP KeyEventSink::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, 
     // Acceptable for an edge case essentially never hit on US QWERTY.
     bool isPunctuation = IsPunctuationKey(static_cast<UINT>(wParam));
     if (isPunctuation && pEngineController_->HasEngineBuffer()) {
-        bool isVniDigit = pEngineController_->IsVniDigitKey(static_cast<UINT>(wParam));
-        if (!isVniDigit) {
+        bool isEngineDigit = pEngineController_->IsEngineDigitKey(static_cast<UINT>(wParam));
+        if (!isEngineDigit) {
             wchar_t ch = VkToChar(static_cast<UINT>(wParam), lParam);
             if (ch != 0) {
                 *pfEaten = TRUE;
@@ -206,6 +262,47 @@ IFACEMETHODIMP KeyEventSink::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, 
     }
 
     bool wantKey = pEngineController_->WantKey(static_cast<UINT>(wParam), true);
+
+    if (wParam == VK_BACK) {
+        bool suggestKeep = pEngineController_->IsSuggestKeepCharsEnabled();
+        bool notEmpty = false;
+        if (pContext != nullptr && suggestKeep) {
+            auto* pSession = new SelectionCheckEditSession(pContext, &notEmpty);
+            HRESULT hrSession = S_OK;
+            HRESULT hr = pContext->RequestEditSession(
+                pTextService_->GetClientId(), pSession, TF_ES_SYNC | TF_ES_READ, &hrSession);
+            pSession->Release();
+            if (SUCCEEDED(hr) && SUCCEEDED(hrSession) && notEmpty) {
+                wantKey = false;
+            }
+        }
+        TSF_LOG(L"OnTestKeyDown: VK_BACK wantKey=%d suggestKeep=%d notEmptySelection=%d",
+                wantKey, suggestKeep, notEmpty);
+    }
+
+    // Commit-undo BS detection (design 2026-05-17): Ready → Primed.
+    // When the user just CommitWithChar'd a word (space appended) and then
+    // presses BS, they're undoing the just-committed word — not asking to
+    // revive it back into composition. Transition state and let BS pass
+    // through to the host (host deletes the space). ESC arriving next will
+    // restore raw via TryRestoreLastCommitRaw. Second BS in Primed → cancel.
+    // Must run BEFORE BackspaceRevive so revive doesn't compete with undo.
+    if (wParam == VK_BACK && !pEngineController_->HasEngineBuffer()) {
+        if (pEngineController_->IsCommitUndoReady()
+            && pEngineController_->WithinUndoWindow()) {
+            pEngineController_->TransitionUndoReadyToPrimed();
+            // Skip BackspaceRevive — user intent is undo, not revive.
+            *pfEaten = FALSE;
+            lastTestedVk_ = static_cast<UINT>(wParam);
+            lastWantKeyResult_ = false;
+            return S_OK;
+        }
+        if (pEngineController_->IsCommitUndoPrimed()) {
+            // Second BS — user is now deleting committed body, drop the undo window.
+            pEngineController_->ResetCommitUndo();
+            // Fall through to BackspaceRevive (it may want to claim this BS).
+        }
+    }
 
     // Backspace revive: if engine is empty and cursor is right after a Vietnamese
     // word, claim the BS and re-enter composition in HandleKey. Pre-read the word
@@ -252,6 +349,8 @@ IFACEMETHODIMP KeyEventSink::OnTestKeyUp(ITfContext* /*pContext*/, WPARAM wParam
 IFACEMETHODIMP KeyEventSink::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     if (pfEaten == nullptr) return E_INVALIDARG;
 
+    pEngineController_->CheckConfigEvent();
+
     bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
     bool win = (GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0;
@@ -263,6 +362,40 @@ IFACEMETHODIMP KeyEventSink::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPAR
 
     UINT vk = static_cast<UINT>(wParam);
 
+    // Intercept VK_BACK for autocomplete suggestion dismissal (Chromium fallback)
+    if (vk == VK_BACK && pEngineController_->HasEngineBuffer() &&
+        pEngineController_->IsSuggestKeepCharsEnabled() &&
+        pEngineController_->HasNonEmptySelection(pContext)) {
+        TSF_LOG(L"OnKeyDown: backspace autocomplete suggestion detected -> commit and pass through");
+        pEngineController_->Commit(pContext);
+        lastTestedVk_ = 0;
+        lastPunctChar_ = 0;
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+
+    // Esc-restore-raw: end composition with raw keys (víu → virus) when enabled
+    // and buffer non-empty. Eat the key (don't pass to app). Falls through to
+    // standard ESC handling (commit Vietnamese + pass-through) when disabled
+    // or buffer empty.
+    //
+    // Post-BS extension (design 2026-05-17): same logic as OnTestKeyDown — when
+    // engine is empty but commit-undo is Primed, restore from lastCommit_ cache.
+    if (vk == VK_ESCAPE && pEngineController_->IsEscRestoreRawEnabled()) {
+        if (pEngineController_->HasEngineBuffer()) {
+            if (pEngineController_->CommitRawAndEnd(pContext)) {
+                *pfEaten = TRUE;
+                return S_OK;
+            }
+        } else if (pEngineController_->IsCommitUndoPrimed()
+                   && pEngineController_->WithinUndoWindow()) {
+            if (pEngineController_->TryRestoreLastCommitRaw(pContext)) {
+                *pfEaten = TRUE;
+                return S_OK;
+            }
+        }
+    }
+
     // Punctuation: commit composition with this char appended (atomic, no race).
     // Prefer the char cached by OnTestKeyDown (avoids a second ToUnicode call that
     // could mutate kernel dead-key state on some layouts). Fall back to a direct
@@ -270,7 +403,7 @@ IFACEMETHODIMP KeyEventSink::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPAR
     // OnTestKeyDown entirely and route keystrokes straight to OnKeyDown, so the
     // cache never gets populated. Only one ToUnicode call per keystroke either way.
     if (IsPunctuationKey(vk) && pEngineController_->HasEngineBuffer()
-        && !pEngineController_->IsVniDigitKey(vk)) {
+        && !pEngineController_->IsEngineDigitKey(vk)) {
         wchar_t ch = (vk == lastTestedVk_ && lastPunctChar_ != 0)
                        ? lastPunctChar_
                        : VkToChar(vk, lParam);
@@ -287,8 +420,27 @@ IFACEMETHODIMP KeyEventSink::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPAR
         TSF_LOG(L"OnKeyDown: VkToChar failed vk=0x%02X, falling through", vk);
     }
 
-    bool wantKey = (vk == lastTestedVk_) ? lastWantKeyResult_
-                                          : pEngineController_->WantKey(vk, true);
+    bool wantKey = false;
+    if (vk == lastTestedVk_) {
+        wantKey = lastWantKeyResult_;
+    } else {
+        wantKey = pEngineController_->WantKey(vk, true);
+        if (pContext != nullptr && wantKey && vk == VK_BACK && pEngineController_->IsSuggestKeepCharsEnabled()) {
+            bool notEmpty = false;
+            auto* pSession = new SelectionCheckEditSession(pContext, &notEmpty);
+            HRESULT hrSession = S_OK;
+            HRESULT hr = pContext->RequestEditSession(
+                pTextService_->GetClientId(), pSession, TF_ES_SYNC | TF_ES_READ, &hrSession);
+            pSession->Release();
+            if (SUCCEEDED(hr) && SUCCEEDED(hrSession) && notEmpty) {
+                wantKey = false;
+            }
+        }
+    }
+    if (vk == VK_BACK) {
+        TSF_LOG(L"OnKeyDown: VK_BACK wantKey=%d lastTestedVk=%u lastWantKeyResult=%d",
+                wantKey, lastTestedVk_, lastWantKeyResult_);
+    }
     lastTestedVk_ = 0;  // Invalidate cache
     lastPunctChar_ = 0;
 

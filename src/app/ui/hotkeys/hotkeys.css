@@ -1,0 +1,76 @@
+.info-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 4px 0 8px;
+    line-height: 1.4;
+}
+
+.hotkeys-grid {
+    flow: horizontal;
+    border-spacing: 10px;
+    margin-bottom: 8px;
+    width: 100%;
+    height: *;
+}
+
+.hotkey-section {
+    flow: vertical;
+    padding: 10px 12px;
+    width: *;
+    height: *;
+    margin-bottom: 0;
+}
+
+.hotkey-section-header {
+    flow: horizontal;
+    vertical-align: middle;
+    margin-bottom: 8px;
+    min-height: 24px;
+    width: 100%;
+}
+
+.hotkey-section-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: *;
+    vertical-align: middle;
+    line-height: 20px;
+}
+
+.hotkey-chips {
+    flow: horizontal-wrap;
+    margin-bottom: 8px;
+    min-height: 28px;
+    max-height: 135px;
+    overflow-y: scroll-indicator;
+}
+
+.hotkey-chip {
+    flow: horizontal;
+    padding: 4px 8px;
+    margin: 3px 4px 3px 0;
+    border-radius: 4px;
+    background: var(--surface-2, rgba(255,255,255,0.08));
+    border: 1px solid var(--border-color, rgba(255,255,255,0.15));
+    font-size: 12px;
+    align-content: middle;
+}
+.hotkey-chip .chip-label { color: var(--text-primary); }
+.hotkey-chip .chip-delete {
+    margin-left: 6px;
+    cursor: pointer;
+    color: var(--text-secondary, rgba(255,255,255,0.6));
+    background: transparent;
+    border: none;
+    padding: 0 4px;
+}
+.hotkey-chip .chip-delete:hover { color: rgba(240,23,23,1); }
+
+.btn-add-trigger { font-size: 12px; padding: 4px 10px; }
+
+/* Capture overlay styles moved to shared/hotkey-capture.css (Step 5). */
+.footer-row { margin-top: 10px; }

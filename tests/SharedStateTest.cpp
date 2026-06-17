@@ -1,5 +1,5 @@
-// NexusKey - SharedState Unit Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - SharedState Unit Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/ipc/SharedState.h"
@@ -30,7 +30,7 @@ TEST_F(SharedStateTest, InitDefaults_SetsDefaultValues) {
     EXPECT_EQ(state.inputMethod, 0);  // Telex
     EXPECT_EQ(state.spellCheck, 0);
     EXPECT_EQ(state.optimizeLevel, 0);
-    EXPECT_EQ(state.GetFeatureFlags(), FeatureFlags::ALLOW_ZWJF);  // Default: tone keys enabled
+    EXPECT_EQ(state.GetFeatureFlags(), FeatureFlags::ALLOW_ZWJF | FeatureFlags::MODERN_ORTHO);  // Default: tone keys enabled
 }
 
 TEST_F(SharedStateTest, InitDefaults_SetsVersioning) {
@@ -263,26 +263,31 @@ TEST_F(SharedStateTest, FeatureFlags_SmartSwitch_Roundtrip) {
     EXPECT_TRUE(out.smartSwitch);
 }
 
-TEST_F(SharedStateTest, FeatureFlags_TempOffByAlt_Roundtrip) {
-    TypingConfig cfg{};
-    cfg.tempOffByAlt = true;
+// v3 cleanup: TempOffMethod_ByteField_Roundtrip removed — the byte slot was
+// renamed `reservedByte34` (formerly tempOffMethod). HotkeyRegistry's
+// ToggleEnabled intent owns the V/E toggle trigger; see
+// tests/HotkeyRegistryTest.cpp for the replacement coverage. Phase 1 perf
+// histogram (2026-05-19) reuses the same byte slot as `diagFlags` — see
+// PerfHistogramTest.cpp for the bit-0 gate coverage.
+
+TEST_F(SharedStateTest, DiagFlags_PerfHistogramBit_Roundtrip) {
     SharedState state{};
     state.InitDefaults();
-    state.SetFeatureFlags(EncodeFeatureFlags(cfg));
+    EXPECT_EQ(state.diagFlags, 0u)
+        << "InitDefaults must leave all diagnostics off";
 
-    TypingConfig out{};
-    DecodeFeatureFlags(state.GetFeatureFlags(), out);
-    EXPECT_TRUE(out.tempOffByAlt);
+    state.diagFlags = DiagFlags::PERF_HISTOGRAM;
+    EXPECT_NE(state.diagFlags & DiagFlags::PERF_HISTOGRAM, 0u);
+    EXPECT_EQ(state.diagFlags, 0x01u)
+        << "DiagFlags::PERF_HISTOGRAM is the bit-0 contract";
 }
 
-// All toggles ON simultaneously — verifies no bit aliasing
 TEST_F(SharedStateTest, FeatureFlags_AllTogglesOn_NoAliasing) {
     TypingConfig cfg{};
     cfg.beepOnSwitch       = true;
     cfg.macroEnabled       = true;
     cfg.macroInEnglish     = true;
     cfg.smartSwitch        = true;
-    cfg.tempOffByAlt       = true;
 
     SharedState state{};
     state.InitDefaults();
@@ -294,7 +299,6 @@ TEST_F(SharedStateTest, FeatureFlags_AllTogglesOn_NoAliasing) {
     EXPECT_TRUE(out.macroEnabled);
     EXPECT_TRUE(out.macroInEnglish);
     EXPECT_TRUE(out.smartSwitch);
-    EXPECT_TRUE(out.tempOffByAlt);
 }
 
 // Toggle beep OFF while others remain ON — verifies individual bit isolation

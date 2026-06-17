@@ -17,6 +17,23 @@ function initExcludedAppsDialog() {
     });
     dropdownController.init();
 
+    // Update select element colors dynamically when mode selection changes
+    var modeSel = document.getElementById("add-mode");
+    if (modeSel) {
+        var updateSelectColor = function() {
+            var val = modeSel.value;
+            if (val === "0") {
+                modeSel.classList.add("mode-e");
+                modeSel.classList.remove("mode-v");
+            } else {
+                modeSel.classList.add("mode-v");
+                modeSel.classList.remove("mode-e");
+            }
+        };
+        modeSel.addEventListener("change", updateSelectColor);
+        updateSelectColor(); // Initial call
+    }
+
     // Bind button clicks
     var btnAddManual = document.getElementById("btn-add-manual");
     var btnAddCurrent = document.getElementById("btn-add-current");
@@ -76,6 +93,19 @@ function initExcludedAppsDialog() {
         }
         evt.stopPropagation();
     });
+
+    // Event delegation: click the E/V badge to toggle the per-app mode lock.
+    document.on("click", ".app-item-mode", function (evt, badge) {
+        var item = badge.closest(".app-item");
+        if (item) {
+            var appName = item.getAttribute("data-name");
+            var newMode = (badge.getAttribute("data-mode") === "1") ? "0" : "1";
+            document.getElementById("val-app-name").value = appName;
+            document.getElementById("val-app-mode").value = newMode;
+            triggerAction("set-mode");  // C++ persists + calls setAppItemMode back
+        }
+        evt.stopPropagation();
+    });
 }
 
 // Called by C++ to set the list of running apps
@@ -96,8 +126,10 @@ function onAddManual() {
         return;
     }
 
-    // Set hidden inputs for C++ to read
+    // Set hidden inputs for C++ to read (name + selected mode E/V)
+    var modeSel = document.getElementById("add-mode");
     document.getElementById("val-app-name").value = name;
+    document.getElementById("val-app-mode").value = modeSel ? modeSel.value : "0";
     triggerAction("add-manual");
 
     // Clear input after add
@@ -157,8 +189,20 @@ function triggerAction(action) {
     }
 }
 
-// Called by C++ to add items to the list
-function addAppToList(name) {
+// Mode constants must match ExcludedAppsDialog.h (kModeE / kModeV).
+var MODE_E = 0;
+var MODE_V = 1;
+
+function applyModeBadge(badge, mode) {
+    var isV = (mode === MODE_V || mode === "1" || mode === 1);
+    badge.textContent = isV ? "V" : "E";
+    badge.setAttribute("data-mode", isV ? "1" : "0");
+    badge.classList.toggle("mode-v", isV);
+    badge.classList.toggle("mode-e", !isV);
+}
+
+// Called by C++ to add items to the list. mode: 0 = E (excluded), 1 = V (force VN).
+function addAppToList(name, mode) {
     var list = document.getElementById("app-list");
     if (!list) return;
 
@@ -173,6 +217,12 @@ function addAppToList(name) {
     nameSpan.setAttribute("title", name);  // Tooltip shows full name on hover
     item.appendChild(nameSpan);
 
+    // Clickable mode badge (E / V) — toggles the per-app lock.
+    var modeBadge = document.createElement("span");
+    modeBadge.className = "app-item-mode";
+    applyModeBadge(modeBadge, mode);
+    item.appendChild(modeBadge);
+
     // Delete button (× icon)
     var deleteBtn = document.createElement("button");
     deleteBtn.className = "app-item-delete";
@@ -180,6 +230,20 @@ function addAppToList(name) {
     item.appendChild(deleteBtn);
 
     list.appendChild(item);
+}
+
+// Called by C++ after a mode change to update a single row's badge.
+function setAppItemMode(name, mode) {
+    var list = document.getElementById("app-list");
+    if (!list) return;
+    var items = list.querySelectorAll(".app-item");
+    for (var i = 0; i < items.length; i++) {
+        if (items[i].getAttribute("data-name") === name) {
+            var badge = items[i].querySelector(".app-item-mode");
+            if (badge) applyModeBadge(badge, mode);
+            break;
+        }
+    }
 }
 
 // Called by C++ to remove a single item without full reload

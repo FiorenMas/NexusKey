@@ -1,0 +1,10 @@
+; VKey TSF DLL Module Definition File
+; SPDX-License-Identifier: AGPL-3.0-only
+
+LIBRARY "VKeyTSF"
+
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
+    DllRegisterServer   PRIVATE
+    DllUnregisterServer PRIVATE

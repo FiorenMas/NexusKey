@@ -1,15 +1,17 @@
-// NexusKey Classic UI — Control IDs
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic UI — Control IDs
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
 // Dialog IDs
 #define IDD_SETTINGS_CLASSIC    1001
+#define IDD_USER_DEFINED_DIALOG 1002
 
 // ── Compact section: dropdowns ──
 #define IDC_COMBO_METHOD        2001
 #define IDC_COMBO_ENCODING      2002
 #define IDC_COMBO_SWITCHKEY     2003
+#define IDC_BTN_CUSTOM_KEYMAP   2004
 
 // ── Compact section: buttons ──
 #define IDC_BTN_CLOSE           2050
@@ -28,6 +30,8 @@
 #define IDC_CHECK_SMART_SWITCH  2206
 #define IDC_CHECK_EXCLUDE_APPS  2207
 #define IDC_CHECK_ENGLISH_BYPASS 2208
+#define IDC_CHECK_CJK_AUTO_SWITCH 2209
+#define IDC_CHECK_TSF_APPS      2210
 
 // ── Tab 0: Cơ bản — Right column ──
 #define IDC_CHECK_BEEP          2211
@@ -36,9 +40,7 @@
 #define IDC_CHECK_QUICK_TELEX   2214
 #define IDC_CHECK_QUICK_START   2215
 #define IDC_CHECK_QUICK_END     2216
-#define IDC_CHECK_TEMP_OFF_ALT  2218
 #define IDC_CHECK_AUTO_CAPS_MACRO 2219
-#define IDC_CHECK_CANCEL_MACRO_ESC 2220
 
 // ── Tab 1: Phím tắt ──
 #define IDC_CHECK_KEY_CTRL      2301
@@ -58,12 +60,16 @@
 #define IDC_COMBO_ICON_STYLE    2408
 #define IDC_COMBO_STARTUP_MODE  2409
 #define IDC_CHECK_FORCE_LIGHT   2410
+#define IDC_CHECK_DEBUG_LOG     2411
 
 // ── Action buttons ──
 #define IDC_BTN_APP_OVERRIDES   2500
 #define IDC_BTN_EXCLUDE_APPS    2502
 #define IDC_BTN_MACRO_TABLE     2503
 #define IDC_BTN_CHECK_UPDATE    2504
+#define IDC_BTN_OPEN_LOG_FOLDER 2505
+#define IDC_BTN_HOTKEYS         2506
+#define IDC_BTN_TSF_APPS        2507
 
 // ── Static labels ──
 #define IDC_STATIC_METHOD       2601
@@ -81,3 +87,15 @@
 #define IDI_TAB_MACROS          302
 #define IDI_TAB_SYSTEM          303
 #define IDI_BTN_PICK            304
+#define IDI_BTN_SETTINGS        305
+
+// ── User Defined Dialog Controls ──
+#define IDC_EDIT_KEY            2901
+#define IDC_COMBO_ACTION        2902
+#define IDC_LIST_KEYMAP         2903
+#define IDC_BTN_ADD             2904
+#define IDC_BTN_DELETE          2905
+#define IDC_BTN_LOAD_TELEX      2906
+#define IDC_BTN_LOAD_VNI        2907
+#define IDC_BTN_IMPORT          2908
+#define IDC_BTN_EXPORT          2909

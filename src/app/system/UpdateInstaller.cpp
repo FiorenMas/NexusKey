@@ -1,5 +1,5 @@
-// NexusKey - Self-Update Installer Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Self-Update Installer Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "UpdateInstaller.h"
 #include "UpdateSecurity.h"
@@ -193,6 +193,10 @@ bool CopyDirectoryContents(const std::wstring& srcDir, const std::wstring& destD
                 fs::create_directories(destPath);
             } else {
                 fs::create_directories(destPath.parent_path());
+                // Preserving config.toml if it already exists at the root level:
+                if (_wcsicmp(relativePath.wstring().c_str(), L"config.toml") == 0 && fs::exists(destPath)) {
+                    continue; // Skip overwriting config.toml
+                }
                 fs::copy_file(entry.path(), destPath, fs::copy_options::overwrite_existing);
             }
         }
@@ -232,8 +236,8 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
     DeleteFileW((exeDir + L"\\" + TSF_DLL_FILENAME + TSF_DLL_PENDING_SUFFIX).c_str());
     DeleteFileW((exeDir + L"\\" + TSF_DLL_PENDING_MARKER).c_str());
 
-    // 1. Wait for all other NexusKey.exe processes to exit (30s timeout)
-    WaitForOtherProcesses(30000);
+    // 1. Wait for all other VKey.exe processes to exit (120s timeout)
+    WaitForOtherProcesses(120000);
 
     // 2. Move ALL .exe and .dll files to _old_version/ folder
     // This handles sciter.dll, TSF DLLs, and the main EXE regardless of name.
@@ -282,7 +286,7 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
             MoveFileW(entry.path().c_str(), destPath.c_str());
             // Track the main exe for relaunch
             if (_wcsicmp(fs::path(name).extension().c_str(), L".exe") == 0 &&
-                (name.find(L"Nexus") != std::wstring::npos || name.find(L"Next") != std::wstring::npos) &&
+                name.find(L"VKey") != std::wstring::npos &&
                 name.find(L"Update") == std::wstring::npos) {
                 restoredExePath = destPath;
             }
@@ -299,10 +303,19 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
             STARTUPINFOW si = { sizeof(si) };
             PROCESS_INFORMATION pi = {};
             std::wstring cmdLine = L"\"" + restoredExePath + L"\"";
-            CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
-                           CREATE_BREAKAWAY_FROM_JOB, nullptr, exeDir.c_str(), &si, &pi);
-            if (pi.hThread) CloseHandle(pi.hThread);
-            if (pi.hProcess) CloseHandle(pi.hProcess);
+            if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                                CREATE_BREAKAWAY_FROM_JOB, nullptr, exeDir.c_str(), &si, &pi)) {
+                // Fallback: launch without breakaway if restricted by job object
+                ZeroMemory(&pi, sizeof(pi));
+                if (CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                                   0, nullptr, exeDir.c_str(), &si, &pi)) {
+                    CloseHandle(pi.hThread);
+                    CloseHandle(pi.hProcess);
+                }
+            } else {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
         }
 
         ExitProcess(1);
@@ -342,8 +355,8 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
         CopyDirectoryContents(sourceDir, exeDir);
 
         // 6. Find the main executable to launch
-        // Prefer "NexusKey.exe", then "NextKey.exe", then "NextKey32.exe", then any "Nexus/Next*.exe"
-        const std::vector<std::wstring> preferredNames = { L"NexusKey.exe", L"NexusKeyClassic.exe", L"NextKey.exe", L"NextKey32.exe", L"NexusKey64.exe" };
+        // Prefer "VKey.exe", then "VKeyClassic.exe"
+        const std::vector<std::wstring> preferredNames = { L"VKey.exe", L"VKeyClassic.exe" };
         for (const auto& name : preferredNames) {
             std::wstring testPath = exeDir + L"\\" + name;
             if (fs::exists(testPath)) {
@@ -358,8 +371,8 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
                 if (!entry.is_regular_file()) continue;
                 if (_wcsicmp(entry.path().extension().c_str(), L".exe") == 0) {
                     std::wstring name = entry.path().filename().wstring();
-                    if (name.find(L"Nexus") != std::wstring::npos || name.find(L"Next") != std::wstring::npos) {
-                        // Skip updater if it's named NextKeyUpdate.exe
+                    if (name.find(L"VKey") != std::wstring::npos) {
+                        // Skip updater if it's named VKeyUpdate.exe
                         if (name.find(L"Update") == std::wstring::npos) {
                             finalExePath = entry.path().wstring();
                             break;
@@ -386,8 +399,16 @@ std::wstring MakeParkedDllTimestamp(const wchar_t* extraSuffix) noexcept {
         // Quote the path for CreateProcessW cmdline
         std::wstring cmdLine = L"\"" + finalExePath + L"\"";
         
-        if (CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
-                           CREATE_BREAKAWAY_FROM_JOB, nullptr, exeDir.c_str(), &si, &pi)) {
+        if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                            CREATE_BREAKAWAY_FROM_JOB, nullptr, exeDir.c_str(), &si, &pi)) {
+            // Fallback: if breakaway fails due to restricted job object, retry without it
+            ZeroMemory(&pi, sizeof(pi));
+            if (CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                               0, nullptr, exeDir.c_str(), &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+        } else {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
         }
@@ -422,7 +443,8 @@ bool CleanupOldUpdateFiles() noexcept {
         std::wstring oldVersionDir = exeDir + L"\\_old_version";
         if (fs::exists(oldVersionDir)) {
             std::error_code ec;
-            if (fs::remove_all(oldVersionDir, ec) > 0) {
+            std::uintmax_t count = fs::remove_all(oldVersionDir, ec);
+            if (!ec && count > 0 && count != static_cast<std::uintmax_t>(-1)) {
                 cleaned = true;
             }
         }

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="excluded_apps_title">Loại trừ ứng dụng</title>
+    <title data-i18n="excluded_apps_title">Khoá chế độ theo ứng dụng (E / V)</title>
     <link rel="stylesheet" href="../shared/theme.css">
     <link rel="stylesheet" href="../shared/base.css">
     <link rel="stylesheet" href="../shared/subdialog.css">
@@ -20,7 +20,7 @@
     <div class="container" id="main-container">
         <!-- Title Bar -->
         <div class="title-bar">
-            <span class="title-text" data-i18n="excluded_apps_title">Loại trừ ứng dụng</span>
+            <span class="title-text" data-i18n="excluded_apps_title">Khoá chế độ theo ứng dụng (E / V)</span>
             <button class="btn-close" id="btn-close" title="Đóng" data-i18n-title="close">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
                     fill="rgba(240,23,23,1)">
@@ -55,6 +55,10 @@
                     </button>
                 </div>
                 <div class="button-row">
+                    <select class="mode-select" id="add-mode">
+                        <option value="0">E — Loại trừ (tiếng Anh)</option>
+                        <option value="1">V — Khoá tiếng Việt</option>
+                    </select>
                     <button class="btn-action btn-primary" id="btn-add-manual" data-i18n="add">+ Thêm</button>
                     <button class="btn-action btn-secondary" id="btn-add-current" data-i18n="pick_window">🎯 Chọn cửa
                         sổ</button>
@@ -64,7 +68,8 @@
             <!-- List Card -->
             <div class="settings-card list-card">
                 <div class="list-header">
-                    <span class="list-col-name" data-i18n="ea.excluded_list">Ứng dụng được loại trừ</span>
+                    <span class="list-col-name" data-i18n="ea.excluded_list">Ứng dụng</span>
+                    <span class="list-col-mode">Chế độ</span>
                     <span class="list-col-action"></span>
                 </div>
                 <div class="app-list" id="app-list">
@@ -82,6 +87,7 @@
         <!-- Hidden inputs for C++ -->
         <input type="hidden" id="val-action" value="">
         <input type="hidden" id="val-app-name" value="">
+        <input type="hidden" id="val-app-mode" value="0">
     </div>
 </body>
 

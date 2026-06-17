@@ -1,48 +1,52 @@
-# NexusKey - Bộ gõ tiếng Việt hiện đại cho Windows
+# VKey - Bộ gõ tiếng Việt hiện đại cho Windows
 
-[![Build](https://github.com/phatMT97/NextKey/actions/workflows/build.yml/badge.svg)](https://github.com/phatMT97/NextKey/actions/workflows/build.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Build](https://github.com/phatMT97/VKey/actions/workflows/build.yml/badge.svg)](https://github.com/phatMT97/VKey/actions/workflows/build.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Engine: Dual License](https://img.shields.io/badge/Engine-Dual%20License-orange.svg)](LICENSE-COMMERCIAL)
-[![Release](https://img.shields.io/github/v/release/phatMT97/NextKey)](https://github.com/phatMT97/NextKey/releases)
+[![Release](https://img.shields.io/github/v/release/phatMT97/VKey)](https://github.com/phatMT97/VKey/releases)
+[![Code signing](https://img.shields.io/badge/Code_signing-SignPath_Foundation-success)](https://signpath.org/)
 
 <p align="center">
-  <img src="docs/images/nextkey-compact.png" alt="NexusKey Compact View" width="250">
-  <img src="docs/images/nextkey-expanded.png" alt="NexusKey Expanded View" width="550">
+  <img src="docs/images/vkey-compact.png" alt="VKey Compact View" width="250">
+  <img src="docs/images/vkey-expanded.png" alt="VKey Expanded View" width="550">
 </p>
-<p align="center"><em>Giao diện NexusKey: Chế độ thu gọn (trái) và Cài đặt mở rộng (phải)</em></p>
+<p align="center"><em>Giao diện VKey: Chế độ thu gọn (trái) và Cài đặt mở rộng (phải)</em></p>
 
 <p align="center">
-  <img src="docs/images/nextkey-full-UI.png" alt="NexusKey Full UI" width="800">
+  <img src="docs/images/vkey-full-UI.png" alt="VKey Full UI" width="800">
 </p>
-<p align="center"><em>Giao diện đầy đủ NexusKey</em></p>
+<p align="center"><em>Giao diện đầy đủ VKey</em></p>
 
 <p align="center">
-  <img src="docs/images/nexus-classic.png" alt="NexusKey Classic UI" width="700">
+  <img src="docs/images/nexus-classic.png" alt="VKey Classic UI" width="700">
 </p>
 <p align="center"><em>Giao diện Classic (Win32 native) — nhẹ, tương thích cao</em></p>
 
 ---
 
-**[Giới thiệu](#giới-thiệu)** | **[Tính năng](#tính-năng)** | **[Cài đặt](#cài-đặt)** | **[Xác minh](#xác-minh-bản-tải-verify-release)** | **[Build](#build-từ-mã-nguồn)** | **[Kiến trúc](#kiến-trúc)** | **[English](#english-version)** | **[Credits](#credits)**
+**[Giới thiệu](#giới-thiệu)** | **[Hướng dẫn sử dụng](docs/GUIDE.md)** | **[Tính năng](#tính-năng)** | **[Cài đặt](#cài-đặt)** | **[Xác minh](#xác-minh-bản-tải-verify-release)** | **[Build](#build-từ-mã-nguồn)** | **[Kiến trúc](#kiến-trúc)** | **[English](#english-version)** | **[Credits](#credits)**
 
 ---
 
+> [!NOTE]
+> **📖 Hướng dẫn sử dụng:** Để xem hướng dẫn chi tiết các tính năng, phím tắt và câu hỏi thường gặp (FAQ), vui lòng đọc [Hướng dẫn sử dụng VKey (GUIDE.md)](docs/GUIDE.md).
+
 ## Giới thiệu
 
-**NexusKey** là bộ gõ tiếng Việt mã nguồn mở cho Windows, được viết lại từ hoàn toàn [NextKey](https://github.com/phatMT97/NexusKey/tree/feat/UI-Next) (một fork của [OpenKey](https://github.com/tuyenvm/OpenKey) của Mai Vũ Tuyên).
+**VKey** là bộ gõ tiếng Việt mã nguồn mở cho Windows, được viết lại từ hoàn toàn [NextKey](https://github.com/phatMT97/VKey/tree/feat/UI-Next) (một fork của [OpenKey](https://github.com/tuyenvm/OpenKey) của Mai Vũ Tuyên).
 
 Engine mới, kiến trúc mới, C++20, hiệu năng cao, giao diện Glassmorphism.
 
-> Engine NexusKey được tối ưu dựa trên nghiên cứu ngữ âm học tiếng Việt, có tham khảo mã nguồn [Unikey](https://www.unikey.org/source.html) của bác **Phạm Kim Long** cho các quy tắc âm vị học (VCPair, consonant restrictions). Xin chân thành cảm ơn!
+> Engine VKey được tối ưu dựa trên nghiên cứu ngữ âm học tiếng Việt, có tham khảo mã nguồn [Unikey](https://www.unikey.org/source.html) của bác **Phạm Kim Long** cho các quy tắc âm vị học (VCPair, consonant restrictions). Xin chân thành cảm ơn!
 
 <a name="privacy-policy"></a>
 ### Chính sách bảo mật
-* **Không ghi phím:** NexusKey không thu thập, lưu trữ, hay gửi phím bạn gõ đi đâu.
+* **Không ghi phím:** VKey không thu thập, lưu trữ, hay gửi phím bạn gõ đi đâu.
 * **Không thu thập dữ liệu:** Không có dữ liệu cá nhân nào được gửi lên server.
 * **Hoạt động offline:** Phần mềm hoạt động hoàn toàn cục bộ trên máy bạn.
 * **Mã nguồn mở:** Bạn có thể tự kiểm chứng bằng cách đọc mã nguồn.
 
-> **Lưu ý:** Dự án này được phát triển chủ yếu dựa trên nhu cầu và trải nghiệm cá nhân, vì vậy có thể vẫn tồn tại một số lỗi chưa được phát hiện hoặc khắc phục triệt để. Rất mong nhận được sự thông cảm và đóng góp ý kiến thông qua [Issue](https://github.com/phatMT97/NextKey/issues) để bộ gõ ngày càng hoàn thiện hơn.
+> **Lưu ý:** Dự án này được phát triển chủ yếu dựa trên nhu cầu và trải nghiệm cá nhân, vì vậy có thể vẫn tồn tại một số lỗi chưa được phát hiện hoặc khắc phục triệt để. Rất mong nhận được sự thông cảm và đóng góp ý kiến thông qua [Issue](https://github.com/phatMT97/VKey/issues) để bộ gõ ngày càng hoàn thiện hơn.
 
 ---
 
@@ -88,9 +92,11 @@ Engine mới, kiến trúc mới, C++20, hiệu năng cao, giao diện Glassmorp
 
 ## Cài đặt
 
-1. Tải phiên bản mới nhất tại **[Releases](https://github.com/phatMT97/NextKey/releases)**.
-2. Giải nén và chạy `NexusKey.exe`.
+1. Tải phiên bản mới nhất tại **[Releases](https://github.com/phatMT97/VKey/releases)**.
+2. Giải nén và chạy `VKey.exe`.
 3. *(Khuyến nghị)* Tắt các bộ gõ khác (Unikey, EVKey) để tránh xung đột.
+
+> **Ký số (Code signing):** Dịch vụ ký số (Authenticode) trên Windows cho VKey được cung cấp miễn phí bởi [SignPath.io](https://signpath.io/), chứng chỉ ký số bởi [SignPath Foundation](https://signpath.org/).
 
 ---
 
@@ -100,13 +106,13 @@ Mỗi bản phát hành đều được ký bằng [Sigstore](https://sigstore.d
 
 ```bash
 # Xác minh bằng GitHub CLI
-gh attestation verify NexusKey.zip --repo PhatMT97/NexusKey
+gh attestation verify VKey.zip --repo PhatMT97/VKey
 
 # Xác minh bằng cosign
-cosign verify-blob NexusKey.zip \
-  --bundle NexusKey.zip.sigstore.json \
+cosign verify-blob VKey.zip \
+  --bundle VKey.zip.sigstore.json \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp="https://github.com/phatMT97/NexusKey/"
+  --certificate-identity-regexp="https://github.com/phatMT97/VKey/"
 ```
 
 > **Lưu ý:** Đây không phải code signing truyền thống (Authenticode). Windows SmartScreen vẫn có thể cảnh báo khi chạy lần đầu — đây là hành vi bình thường với phần mềm mã nguồn mở chưa có chứng chỉ ký số.
@@ -127,13 +133,13 @@ Các thư viện phụ thuộc (Sciter SDK, Google Test, toml++) đã có sẵn 
 
 ```powershell
 cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --target NextKeyApp
+cmake --build build --config Release --target VKeyApp
 ```
 
 ### Chạy test
 
 ```powershell
-cmake --build build --config Release --target NextKeyTests
+cmake --build build --config Release --target VKeyTests
 ctest --test-dir build --build-config Release --output-on-failure
 ```
 
@@ -141,23 +147,25 @@ ctest --test-dir build --build-config Release --output-on-failure
 
 ## Kiến trúc
 
-NexusKey gồm ba lớp:
+VKey gồm ba lớp:
 
 | Lớp | Target | Mô tả |
 |-----|--------|-------|
-| **NextKeyEngine** | Static lib | Engine gõ tiếng Việt thuần C++20 (Telex, VNI), kiểm tra chính tả, chuyển bảng mã. Không phụ thuộc platform. |
-| **NextKeyCore** | Static lib | Lớp platform — shared memory IPC, quản lý config, smart switch. |
-| **NextKeyApp** | Win32 EXE | Ứng dụng GUI với Sciter.JS, hook engine, tray icon, tự cập nhật. |
-| **NextKeyTSF** | DLL | Tích hợp Text Services Framework — đăng ký như Windows input method. |
+| **VKeyEngine** | Static lib | Engine gõ tiếng Việt thuần C++20 (Telex, VNI), kiểm tra chính tả, chuyển bảng mã. Không phụ thuộc platform. |
+| **VKeyCore** | Static lib | Lớp platform — shared memory IPC, quản lý config, smart switch. |
+| **VKeyApp** | Win32 EXE | Ứng dụng GUI với Sciter.JS, hook engine, tray icon, tự cập nhật. |
+| **VKeyTSF** | DLL | Tích hợp Text Services Framework — đăng ký như Windows input method. |
 
 ### Tối ưu bộ nhớ
 
-NexusKey được thiết kế với kiến trúc gọn nhẹ, không phụ thuộc runtime nặng, nên bản thân chương trình đã rất tiết kiệm tài nguyên — khởi chạy chỉ chiếm khoảng **1.6 ~ 2 MB RAM**. Nhờ footprint nhỏ, hệ điều hành có thể dễ dàng trim working set xuống còn khoảng **0.3 MB** sau một thời gian idle:
+VKey được thiết kế với kiến trúc gọn nhẹ, không phụ thuộc runtime nặng, nên rất tiết kiệm tài nguyên — lúc đang chạy chỉ chiếm khoảng **1.6 ~ 2 MB RAM**. Con số này là *working set* mà Task Manager hiển thị: nó tự **lên xuống** theo mức sử dụng. Khi máy rảnh một lúc, hệ điều hành tự trim xuống còn khoảng **0.3 MB** (mức ~1.6–2 MB lúc đang dùng là hoàn toàn bình thường):
 
 <p align="center">
-  <img src="docs/images/ram-optimize.png" alt="NexusKey RAM Usage - 0.3 MB" width="700">
+  <img src="docs/images/ram-optimize.png" alt="VKey RAM Usage - 0.3 MB" width="700">
 </p>
-<p align="center"><em>NexusKey chỉ chiếm 0.3 MB RAM — kiến trúc nhẹ, OS dễ dàng tối ưu</em></p>
+<p align="center"><em>VKey ở mức nghỉ ~0.3 MB sau khi idle — kiến trúc nhẹ, OS tự tối ưu</em></p>
+
+> ℹ️ Thấy Task Manager hiện ~1.7 MB chứ không phải 0.3 MB? Đó là *working set* lúc đang dùng — bình thường và khỏe mạnh, không phải rò rỉ bộ nhớ. Chi tiết: [GUIDE — FAQ về RAM](docs/GUIDE.md#faq).
 
 ---
 
@@ -168,12 +176,15 @@ NexusKey được thiết kế với kiến trúc gọn nhẹ, không phụ thu�
 
 ### About
 
-**NexusKey** is an open-source Vietnamese Input Method Editor (IME) for Windows, completely rewritten from [NextKey](https://github.com/phatMT97/NextKey/tree/master) (based on [OpenKey](https://github.com/tuyenvm/OpenKey) by Mai Vu Tuyen).
+> [!NOTE]
+> **📖 User Guide:** For detailed usage instructions, hotkeys, and FAQ, please refer to the [VKey User Guide (docs/GUIDE.md)](docs/GUIDE.md).
+
+**VKey** is an open-source Vietnamese Input Method Editor (IME) for Windows, completely rewritten from [NextKey](https://github.com/phatMT97/VKey/tree/master) (based on [OpenKey](https://github.com/tuyenvm/OpenKey) by Mai Vu Tuyen).
 
 New engine, new architecture, C++20, high performance, Glassmorphism UI. Engine phonology rules reference [Unikey](https://www.unikey.org/source.html) by Pham Kim Long.
 
 ### Privacy Policy
-* **No Keylogging:** NexusKey does not collect, store, or transmit your keystrokes.
+* **No Keylogging:** VKey does not collect, store, or transmit your keystrokes.
 * **No Data Collection:** No personal data is sent to any server.
 * **Offline First:** The software operates entirely locally on your machine.
 * **Open Source:** You can verify this behavior by reviewing our source code.
@@ -224,9 +235,11 @@ New engine, new architecture, C++20, high performance, Glassmorphism UI. Engine 
 
 ### Installation
 
-1. Download the latest version from **[Releases](https://github.com/phatMT97/NextKey/releases)**.
-2. Extract and run `NexusKey.exe`.
+1. Download the latest version from **[Releases](https://github.com/phatMT97/VKey/releases)**.
+2. Extract and run `VKey.exe`.
 3. *(Recommended)* Disable other IMEs (Unikey, EVKey) to avoid conflicts.
+
+> **Code signing:** Free Authenticode code signing on Windows for VKey is provided by [SignPath.io](https://signpath.io/), with the certificate issued by [SignPath Foundation](https://signpath.org/).
 
 ### Building
 
@@ -234,40 +247,58 @@ New engine, new architecture, C++20, high performance, Glassmorphism UI. Engine 
 
 ```powershell
 cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --target NextKeyApp
+cmake --build build --config Release --target VKeyApp
 ```
 
 ### Architecture
 
 | Layer | Target | Description |
 |-------|--------|-------------|
-| **NextKeyEngine** | Static lib | Pure C++20 Vietnamese input engines (Telex, VNI), spell checker, code table converter. Zero platform dependencies. |
-| **NextKeyCore** | Static lib | Platform layer — shared memory IPC, configuration management, smart switch. |
-| **NextKeyApp** | Win32 EXE | GUI application with Sciter.JS UI, hook engine, tray icon, auto-update. |
-| **NextKeyTSF** | DLL | Text Services Framework integration — registers as a Windows input method. |
+| **VKeyEngine** | Static lib | Pure C++20 Vietnamese input engines (Telex, VNI), spell checker, code table converter. Zero platform dependencies. |
+| **VKeyCore** | Static lib | Platform layer — shared memory IPC, configuration management, smart switch. |
+| **VKeyApp** | Win32 EXE | GUI application with Sciter.JS UI, hook engine, tray icon, auto-update. |
+| **VKeyTSF** | DLL | Text Services Framework integration — registers as a Windows input method. |
 
 #### Memory Optimization
 
-NexusKey is built with a lean architecture and no heavy runtime dependencies, keeping resource usage minimal — starting at only **~1.6–2 MB RAM**. Thanks to its small footprint, the OS can easily trim the working set down to as low as **0.3 MB** after idle:
+VKey is built with a lean architecture and no heavy runtime dependencies, keeping resource usage minimal — only **~1.6–2 MB RAM** while active. That figure is the *working set* shown in Task Manager: it naturally **rises and falls** with usage. After a period of inactivity the OS trims it down to as low as **0.3 MB** (seeing ~1.6–2 MB while you're typing is perfectly normal):
 
 <p align="center">
-  <img src="docs/images/ram-optimize.png" alt="NexusKey RAM Usage - 0.3 MB" width="700">
+  <img src="docs/images/ram-optimize.png" alt="VKey RAM Usage - 0.3 MB" width="700">
 </p>
-<p align="center"><em>NexusKey at 0.3 MB RAM — lightweight architecture, easily optimized by the OS</em></p>
+<p align="center"><em>VKey at its idle floor (~0.3 MB) — lightweight architecture, trimmed automatically by the OS</em></p>
+
+> ℹ️ Task Manager shows ~1.7 MB instead of 0.3 MB? That's the active *working set* — normal and healthy, not a memory leak. Details: [GUIDE — RAM FAQ](docs/GUIDE.md#faq).
 
 </details>
 
 ---
 
+## Sponsors
+
+<table>
+  <tr>
+    <td align="center" width="80">
+      <a href="https://signpath.org/"><img src="https://signpath.org/assets/favicon-50x50.png" alt="SignPath" width="40"></a>
+    </td>
+    <td>
+      Free code signing on Windows provided by <a href="https://signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a>
+    </td>
+  </tr>
+</table>
+
 ## Credits
 
-- Kế thừa từ [NextKey](https://github.com/phatMT97/NextKey/tree/master), lấy cảm hứng từ [OpenKey](https://github.com/tuyenvm/OpenKey) của Mai Vũ Tuyên
+- Kế thừa từ [NextKey](https://github.com/phatMT97/VKey/tree/master), lấy cảm hứng từ [OpenKey](https://github.com/tuyenvm/OpenKey) của Mai Vũ Tuyên
 - Quy tắc âm vị học tham khảo từ [Unikey](https://www.unikey.org/source.html) của Phạm Kim Long
 - Giao diện bởi [Sciter.JS](https://sciter.com/)
 - Đọc config bởi [toml++](https://github.com/marzer/tomlplusplus)
 - Testing bởi [Google Test](https://github.com/google/googletest)
 - Tham khảo rule -ing cho spell check của [Gonhanh.org](https://github.com/khaphanspace/gonhanh.org?tab=readme-ov-file#-t%C3%A0i-li%E1%BB%87u-k%E1%BB%B9-thu%E1%BA%ADt)
 - Tham khảo config TSF từ [VietType](https://github.com/dinhngtu/VietType)
+- Tham khảo cách xử lý clipboard input từ [SigmaLib](https://github.com/phamhoangnhat/SigmaLib) của Phạm Hoàng Nhật
+- Tham khảo quy tắt tiếng việt từ [dotnetkey](https://code.google.com/archive/p/dotnetkey/downloads)
+- Dịch vụ ký số (Authenticode) trên Windows cung cấp miễn phí bởi [SignPath.io](https://signpath.io/), chứng chỉ ký số bởi [SignPath Foundation](https://signpath.org/)
 
 ### Top Testers
 Cảm ơn các thành viên cộng đồng đã test và góp ý:
@@ -275,6 +306,8 @@ Cảm ơn các thành viên cộng đồng đã test và góp ý:
 - [huntersun](https://github.com/huntersun)
 - [haihv8x](https://github.com/haihv8x)
 - [os-hoanghv](https://github.com/os-hoanghv)
+- [Shzr0](https://github.com/Shzr0)
+- [nghiabros](https://github.com/nghiabros)
 
 ## License
 
@@ -282,12 +315,12 @@ Dự án sử dụng **dual license**:
 
 | Thành phần | License |
 |------------|---------|
-| **Engine** (`src/core/engine/*`) | [GPL-3.0](LICENSE) **hoặc** [Commercial](LICENSE-COMMERCIAL) |
-| **Tất cả phần còn lại** | [GPL-3.0](LICENSE) |
+| **Engine** (`src/core/engine/*`) | [AGPL-3.0](LICENSE) **hoặc** [Commercial](LICENSE-COMMERCIAL) |
+| **Tất cả phần còn lại** | [AGPL-3.0](LICENSE) |
 
-- **Sử dụng open-source (GPL-3.0):** Bạn có thể sử dụng, sửa đổi, phân phối lại toàn bộ mã nguồn với điều kiện giữ nguyên license GPL-3.0 cho derivative works.
-- **Sử dụng thương mại/closed-source:** Nếu muốn dùng engine NexusKey trong sản phẩm proprietary, vui lòng liên hệ tác giả để lấy commercial license. Xem [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL).
+- **Sử dụng open-source (AGPL-3.0):** Bạn có thể sử dụng, sửa đổi, phân phối lại toàn bộ mã nguồn với điều kiện giữ nguyên license AGPL-3.0 cho derivative works — bao gồm cả khi cung cấp dưới dạng dịch vụ qua mạng (SaaS).
+- **Sử dụng thương mại/closed-source:** Nếu muốn dùng engine VKey trong sản phẩm proprietary hoặc né nghĩa vụ AGPL, vui lòng liên hệ tác giả để lấy commercial license. Xem [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL).
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=phatMT97/NexusKey&type=date&legend=top-left)](https://www.star-history.com/?repos=phatMT97%2FNexusKey&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/chart?repos=phatMT97/VKey&type=date&legend=top-left)](https://www.star-history.com/?repos=phatMT97%2FVKey&type=date&legend=top-left)

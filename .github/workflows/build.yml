@@ -25,8 +25,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
-
+    runs-on: windows-2022
+    outputs:
+      artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+      has-classic: ${{ steps.check-classic.outputs.has_classic }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,18 +38,37 @@ jobs:
         with:
           arch: x64
 
+      # Sprint 1 D7 — Phase B compliance gate.
+      # Fails the build if any hook callback regains a stateMutex_ acquisition
+      # or if any migrated atomic field gets a plain assignment/read.
+      # See tools/audit/check_hook_thread_no_mutex.sh + plan §B D7.
+      - name: Audit hook-thread Rule #11.3 compliance
+        shell: bash
+        run: bash tools/audit/check_hook_thread_no_mutex.sh
+
       - name: Configure
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: Build NexusKey
-        run: cmake --build build --config Release --target NextKeyApp
+      - name: Build VKey
+        run: cmake --build build --config Release --target VKeyApp
 
       - name: Build TSF DLL
-        run: cmake --build build --config Release --target NextKeyTSF
+        run: cmake --build build --config Release --target VKeyTSF
+
+      - name: Build Watchdog
+        run: cmake --build build --config Release --target VKeyWatchdog
 
       - name: Build tests
         if: github.event_name != 'workflow_dispatch' || inputs.include_tests
-        run: cmake --build build --config Release --target NextKeyTests
+        # VKeyTestRunnerTests is gitignored at repo level (.gitignore on
+        # Main), so it's absent on fresh CI checkouts. CMakeLists.txt skips
+        # add_subdirectory when the dir is missing — only build it if present.
+        shell: bash
+        run: |
+          cmake --build build --config Release --target VKeyTests
+          if [ -f tools/VKeyTestRunner/CMakeLists.txt ]; then
+            cmake --build build --config Release --target VKeyTestRunnerTests
+          fi
 
       - name: Run tests
         if: github.event_name != 'workflow_dispatch' || inputs.include_tests
@@ -56,25 +77,91 @@ jobs:
       # --- Classic UI (Lite) build ---
       - name: Configure Classic UI
         if: github.event_name != 'workflow_dispatch' || inputs.include_classic
-        run: cmake -B build-classic -G "Visual Studio 17 2022" -A x64 -DNEXUSKEY_LITE_MODE=ON
+        run: cmake -B build-classic -G "Visual Studio 17 2022" -A x64 -DVKEY_LITE_MODE=ON
 
       - name: Build Classic UI
         if: github.event_name != 'workflow_dispatch' || inputs.include_classic
-        run: cmake --build build-classic --config Release --target NextKeyLite
+        run: cmake --build build-classic --config Release --target VKeyLite
+
+      # --- Gather unsigned binaries ---
+      - name: Gather unsigned binaries
+        id: check-classic
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path unsigned-binaries
+          Copy-Item "build/Release/VKey.exe" "unsigned-binaries/" -Force
+          Copy-Item "build/Release/VKeyTSF.dll" "unsigned-binaries/" -Force
+          Copy-Item "build/Release/VKeyWatchdog.exe" "unsigned-binaries/" -Force
+          # Bundled Sciter runtime ships unsigned from the vendor — route it through
+          # SignPath so every binary in the release ZIP is Authenticode-signed.
+          Copy-Item "extern/sciter/bin/sciter.dll" "unsigned-binaries/" -Force
+          $hasClassic = "false"
+          if (Test-Path "build-classic/Release/VKeyClassic.exe") {
+            Copy-Item "build-classic/Release/VKeyClassic.exe" "unsigned-binaries/" -Force
+            $hasClassic = "true"
+          }
+          echo "has_classic=$hasClassic" >> $env:GITHUB_OUTPUT
+
+      - name: Upload unsigned binaries for signing
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-binaries
+          path: unsigned-binaries/
+          retention-days: 7
+
+  sign-and-release:
+    needs: build
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- SignPath Code Signing ---
+      - name: Submit signing request to SignPath
+        id: signpath-sign
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '8e66dee3-2c1d-407f-a391-0d0d3fd74913'
+          project-slug: 'VKey'
+          signing-policy-slug: "${{ startsWith(github.ref, 'refs/tags/') && 'release-signing' || 'test-signing' }}"
+          github-artifact-id: '${{ needs.build.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed-binaries'
+
+      - name: Reconstruct release layout
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "signed-binaries/VKey.exe" "dist/" -Force
+          Copy-Item "signed-binaries/VKeyTSF.dll" "dist/" -Force
+          Copy-Item "signed-binaries/VKeyWatchdog.exe" "dist/" -Force
+          Copy-Item "signed-binaries/sciter.dll" "dist/" -Force
+          
+          New-Item -ItemType Directory -Force -Path upload-payload
+          Copy-Item "dist/*" "upload-payload/" -Force
+          
+          if ("${{ needs.build.outputs.has-classic }}" -eq "true") {
+            New-Item -ItemType Directory -Force -Path dist-classic
+            Copy-Item "signed-binaries/VKeyClassic.exe" "dist-classic/" -Force
+            Copy-Item "signed-binaries/VKeyWatchdog.exe" "dist-classic/" -Force
+            
+            Copy-Item "signed-binaries/VKeyClassic.exe" "upload-payload/" -Force
+          }
 
       # --- Zip releases ---
       - name: Zip Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: powershell
         run: |
-          Get-ChildItem "build/Release/*" -Include NexusKey.exe,NextKeyTSF.dll,sciter.dll |
-            Compress-Archive -DestinationPath NexusKey.zip
+          Compress-Archive -Path "dist/*" -DestinationPath VKey.zip
 
       - name: Zip Classic Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && needs.build.outputs.has-classic == 'true'
         shell: powershell
         run: |
-          Compress-Archive -Path "build-classic/Release/NexusKeyClassic.exe" -DestinationPath NexusKeyClassic.zip
+          Compress-Archive -Path "dist-classic/*" -DestinationPath VKeyClassic.zip
 
       # --- SHA-256 checksums ---
       - name: Generate SHA-256 checksums
@@ -83,40 +170,27 @@ jobs:
         run: |
           # Generate SHA-256 sidecars used by VerifyDownloadedZip (SEC-001)
           # Format: "<hash>  <filename>" (GNU coreutils sha256sum compatible)
-          foreach ($file in @("NexusKey.zip", "NexusKeyClassic.zip")) {
+          $files = @("VKey.zip")
+          if ("${{ needs.build.outputs.has-classic }}" -eq "true") {
+            $files += "VKeyClassic.zip"
+          }
+          foreach ($file in $files) {
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
             "$hash  $file" | Out-File -Encoding ascii "$file.sha256"
           }
 
-      # --- Cosign keyless signing (Sigstore) ---
-      - name: Install Cosign
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: sigstore/cosign-installer@v3
-
-      - name: Sign NexusKey.zip
-        if: startsWith(github.ref, 'refs/tags/')
-        continue-on-error: true
-        run: |
-          cosign sign-blob NexusKey.zip --bundle NexusKey.zip.sigstore.json --yes
-
-      - name: Sign NexusKeyClassic.zip
-        if: startsWith(github.ref, 'refs/tags/')
-        continue-on-error: true
-        run: |
-          cosign sign-blob NexusKeyClassic.zip --bundle NexusKeyClassic.zip.sigstore.json --yes
-
       # --- GitHub build provenance attestation ---
-      - name: Attest NexusKey
+      - name: Attest VKey
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: NexusKey.zip
+          subject-path: VKey.zip
 
-      - name: Attest NexusKey Classic
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Attest VKey Classic
+        if: startsWith(github.ref, 'refs/tags/') && needs.build.outputs.has-classic == 'true'
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: NexusKeyClassic.zip
+          subject-path: VKeyClassic.zip
 
       - name: Release
         uses: softprops/action-gh-release@v1
@@ -124,18 +198,14 @@ jobs:
         with:
           body_path: RELEASE_NOTES.md
           files: |
-            NexusKey.zip
-            NexusKey.zip.sha256
-            NexusKey.zip.sigstore.json
-            NexusKeyClassic.zip
-            NexusKeyClassic.zip.sha256
-            NexusKeyClassic.zip.sigstore.json
+            VKey.zip
+            VKey.zip.sha256
+            VKeyClassic.zip
+            VKeyClassic.zip.sha256
+          fail_on_unmatched_files: false
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: NexusKey-x64
-          path: |
-            build/Release/NexusKey.exe
-            build/Release/NextKeyTSF.dll
-            build/Release/sciter.dll
+          name: VKey-x64
+          path: upload-payload/

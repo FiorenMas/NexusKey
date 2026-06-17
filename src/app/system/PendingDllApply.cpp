@@ -1,5 +1,5 @@
-// NexusKey - Apply deferred TSF DLL swap at EXE startup
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Apply deferred TSF DLL swap at EXE startup
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "PendingDllApply.h"
 #include "UpdateInstaller.h"              // TSF_DLL_FILENAME, constants, MakeParkedDllTimestamp
@@ -133,7 +133,7 @@ void RestartWindowsNow() noexcept {
 }
 
 void RestartWindowsWithPrompt(HWND owner) noexcept {
-    if (MessageBoxW(owner, S(StringId::UPDATE_BANNER_CONFIRM), L"NexusKey",
+    if (MessageBoxW(owner, S(StringId::UPDATE_BANNER_CONFIRM), L"VKey",
                     MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) == IDOK) {
         RestartWindowsNow();
     }

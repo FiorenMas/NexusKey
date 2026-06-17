@@ -286,6 +286,8 @@ typedef struct _ISciterAPI {
   SCDOM_RESULT SCFN(SciterEGLSendEvent)(HELEMENT he, UINT eventCode, UINT_PTR reason);
   SCDOM_RESULT SCFN(SciterRequestAnimationFrameEvent)(HELEMENT he, UINT eventCode, UINT_PTR reason);
 
+  SCDOM_RESULT SCFN(SciterRequestPaint)(HELEMENT he);
+
 } ISciterAPI;
 
 typedef ISciterAPI* (SCAPI *SciterAPI_ptr)();
@@ -520,7 +522,7 @@ inline ISciterAPI *_SAPI(ISciterAPI *ext) {
 #endif
   inline   SBOOL    SCAPI SciterLoadFile (HWINDOW hWndSciter, LPCWSTR filename) { return SAPI()->SciterLoadFile (hWndSciter,filename); }
   inline   SBOOL    SCAPI SciterLoadHtml (HWINDOW hWndSciter, LPCBYTE html, UINT htmlSize, LPCWSTR baseUrl) { return SAPI()->SciterLoadHtml (hWndSciter,html,htmlSize,baseUrl); }
-  inline   VOID    SCAPI SciterSetCallback (HWINDOW hWndSciter, LPSciterHostCallback cb, LPVOID cbParam) { SAPI()->SciterSetCallback (hWndSciter,cb,cbParam); }
+  inline   VOID     SCAPI SciterSetCallback (HWINDOW hWndSciter, LPSciterHostCallback cb, LPVOID cbParam) { SAPI()->SciterSetCallback (hWndSciter,cb,cbParam); }
   inline   SBOOL    SCAPI SciterSetMasterCSS (LPCBYTE utf8, UINT numBytes) { return SAPI()->SciterSetMasterCSS (utf8,numBytes); }
   inline   SBOOL    SCAPI SciterAppendMasterCSS (LPCBYTE utf8, UINT numBytes) { return SAPI()->SciterAppendMasterCSS (utf8,numBytes); }
   inline   SBOOL    SCAPI SciterSetCSS (HWINDOW hWndSciter, LPCBYTE utf8, UINT numBytes, LPCWSTR baseUrl, LPCWSTR mediaType) { return SAPI()->SciterSetCSS (hWndSciter,utf8,numBytes,baseUrl,mediaType); }
@@ -676,7 +678,7 @@ inline ISciterAPI *_SAPI(ISciterAPI *ext) {
   inline UINT SCAPI ValueNativeFunctorSet (VALUE* pval, NATIVE_FUNCTOR_INVOKE*  pinvoke, NATIVE_FUNCTOR_RELEASE* prelease, VOID* tag ) { return SAPI()->ValueNativeFunctorSet ( pval, pinvoke,prelease,tag); }
   inline SBOOL SCAPI ValueIsNativeFunctor ( const VALUE* pval) { return SAPI()->ValueIsNativeFunctor (pval); }
 
-  inline   SBOOL SCAPI SciterProcX(HWINDOW hwnd, SCITER_X_MSG* pMsg) { return SAPI()->SciterProcX(hwnd, pMsg); }
+  inline SBOOL SCAPI SciterProcX(HWINDOW hwnd, SCITER_X_MSG* pMsg) { return SAPI()->SciterProcX(hwnd, pMsg); }
 #ifdef __cplusplus
   template<class MSG>
   inline   SBOOL SCAPI SciterProcX(HWINDOW hwnd, const MSG &msg) {
@@ -708,5 +710,10 @@ inline ISciterAPI *_SAPI(ISciterAPI *ext) {
   inline SCDOM_RESULT SCAPI SciterRequestAnimationFrameEvent(HELEMENT he, UINT eventCode, UINT_PTR reason) {
     return SAPI()->SciterRequestAnimationFrameEvent(he, eventCode, reason);
   }
+
+  inline SCDOM_RESULT SCAPI SciterRequestPaint(HELEMENT he) {
+    return SAPI()->SciterRequestPaint(he);
+  }
+  
 
 #endif

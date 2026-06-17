@@ -1,6 +1,6 @@
-// NexusKey Classic — Settings Dialog
+// VKey Classic — Settings Dialog
 // Compact (Unikey-style) + Advanced (EVKey-style) modes
-// SPDX-License-Identifier: GPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -62,11 +62,17 @@ private:
     void OnCommand(WPARAM wParam, LPARAM lParam);
     void OnActionButton(uint16_t controlId);
     void OnSystemToggle(const wchar_t* id, bool value);
+    /// Side-effect handler for the TSF-apps checkbox.
+    /// Registers/unregisters the TSF DLL to match the requested state.
+    /// Returns true if the DLL state now matches; false means the caller
+    /// must revert the checkbox + config (user denied UAC, regsvr32 failed, etc).
+    [[nodiscard]] bool OnTsfAppsToggle(bool wantsEnabled);
     void OnPickIconColors();
     void UpdateSpellCheckChildren();
     void RefreshLabels();
     void OnTabChange();
     void ShowTabPage(int tabIndex);
+    void UpdateCustomKeyMapButtonVisibility();
 
     // -- Helpers --
     HWND CreateLabel(const wchar_t* text, int x, int y, int w, int h, UINT id);
@@ -85,7 +91,7 @@ private:
     // -- Layout constants (pixels at 96 DPI, scaled by Dpi()) --
     // All values are multiples of 4 for consistent visual rhythm
     static constexpr int kAdvancedWidth  = 490;
-    static constexpr int kAdvancedHeight = 400;
+    static constexpr int kAdvancedHeight = 440;
     static constexpr int kPadding       = 16;
     static constexpr int kControlHeight = 24;
     static constexpr int kComboHeight   = 24;
@@ -109,6 +115,7 @@ private:
     HWND editHotkey_    = nullptr;
     HWND tooltip_       = nullptr;
     HFONT fontSmall_    = nullptr;
+    HWND btnCustomKeymap_ = nullptr;
 
     // Advanced controls
     HWND tabControl_    = nullptr;
@@ -137,7 +144,7 @@ private:
     static constexpr UINT_PTR kTimerDeferredSave = 1001;
     static constexpr DWORD kDeferredSaveDelayMs  = 30000;  // 30 seconds
 
-    static constexpr const wchar_t* kClassName = L"NexusKeyClassicSettings";
+    static constexpr const wchar_t* kClassName = L"VKeyClassicSettings";
 };
 
 } // namespace NextKey::Classic

@@ -1,5 +1,5 @@
-// NexusKey - Text Service Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Text Service Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "stdafx.h"
 #include "TextService.h"
@@ -108,6 +108,11 @@ IFACEMETHODIMP TextService::Activate(ITfThreadMgr* pThreadMgr, TfClientId tfClie
 
 IFACEMETHODIMP TextService::Deactivate() {
     TSF_LOG(L"TextService::Deactivate");
+
+    // Clear TIP active flag before teardown — layout switched away from VKey
+    if (engineController_) {
+        engineController_->SetTsfTipActive(false);
+    }
 
     if (readonlyProvider_) {
         readonlyProvider_->Unadvise();

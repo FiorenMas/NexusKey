@@ -1,5 +1,5 @@
-// NexusKey Classic — Native Windows Theme Engine
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Native Windows Theme Engine
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicTheme.h"
 #include "DarkModeHelper.h"

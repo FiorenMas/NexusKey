@@ -1,7 +1,7 @@
-// NexusKey - Always-on crash exception logger
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Always-on crash exception logger
+// SPDX-License-Identifier: AGPL-3.0-only
 //
-// Appends a single-line record to `<exe_dir>\_nexuskey_crash.log` when an
+// Appends a single-line record to `<exe_dir>\_vkey_crash.log` when an
 // exception reaches a top-level callback / thread entry. Unlike NEXTKEY_LOG
 // (debug-only), CrashLog is compiled in for Release builds — it's the only
 // breadcrumb left when the catch handler swallows a throw.

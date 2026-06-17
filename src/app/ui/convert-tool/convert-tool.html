@@ -8,10 +8,13 @@
     <link rel="stylesheet" href="../shared/theme.css">
     <link rel="stylesheet" href="../shared/base.css">
     <link rel="stylesheet" href="../shared/toggle.css">
+    <link rel="stylesheet" href="../shared/subdialog.css">
+    <link rel="stylesheet" href="../shared/hotkey-capture.css">
     <link rel="stylesheet" href="convert-tool.css">
     <script src="../shared/utils.js"></script>
     <script src="../shared/strings.js"></script>
     <script src="../shared/i18n.js"></script>
+    <script src="../shared/hotkey-capture.js"></script>
     <script src="convert-tool.js"></script>
 </head>
 
@@ -172,48 +175,19 @@
                 <input type="hidden" id="val-dest-file" value="">
                 <input type="hidden" id="val-ui-mode" value="clipboard">
 
-                <!-- Hotkey row -->
+                <!-- Hotkey row — record button + clear button + shared capture overlay -->
                 <div class="hotkey-section">
                     <span class="hotkey-label" data-i18n="ct.hotkey_label">Phím chuyển mã nhanh:</span>
-                    <div class="hotkey-row">
-                        <div class="hotkey-item">
-                            <span class="key-label">Ctrl</span>
-                            <div class="toggle-switch-small" id="hotkey-ctrl">
-                                <span class="toggle-label-i">I</span>
-                                <span class="toggle-label-o">O</span>
-                                <div class="toggle-thumb-small"></div>
-                            </div>
-                            <input type="hidden" id="val-hotkey-ctrl" value="0">
-                        </div>
-                        <div class="hotkey-item">
-                            <span class="key-label">Alt</span>
-                            <div class="toggle-switch-small" id="hotkey-alt">
-                                <span class="toggle-label-i">I</span>
-                                <span class="toggle-label-o">O</span>
-                                <div class="toggle-thumb-small"></div>
-                            </div>
-                            <input type="hidden" id="val-hotkey-alt" value="0">
-                        </div>
-                        <div class="hotkey-item">
-                            <span class="key-label">Win</span>
-                            <div class="toggle-switch-small" id="hotkey-win">
-                                <span class="toggle-label-i">I</span>
-                                <span class="toggle-label-o">O</span>
-                                <div class="toggle-thumb-small"></div>
-                            </div>
-                            <input type="hidden" id="val-hotkey-win" value="0">
-                        </div>
-                        <div class="hotkey-item">
-                            <span class="key-label">Shift</span>
-                            <div class="toggle-switch-small" id="hotkey-shift">
-                                <span class="toggle-label-i">I</span>
-                                <span class="toggle-label-o">O</span>
-                                <div class="toggle-thumb-small"></div>
-                            </div>
-                            <input type="hidden" id="val-hotkey-shift" value="0">
-                        </div>
-                        <input type="text" class="hotkey-input" id="hotkey-char" maxlength="5" placeholder="~">
+                    <div class="hotkey-controls">
+                        <button class="btn-record-hotkey" id="btn-record-hotkey">
+                            <span class="hotkey-display" id="hotkey-display" data-i18n="ct.hotkey_unset">— Chưa đặt —</span>
+                            <span class="record-hint" data-i18n="ct.hotkey_hint">Bấm để ghi</span>
+                        </button>
+                        <button class="btn-clear-hotkey" id="btn-clear-hotkey" disabled
+                                data-i18n="ct.hotkey_clear">Xóa</button>
                     </div>
+                    <input type="hidden" id="val-hotkey-vk"   value="0">
+                    <input type="hidden" id="val-hotkey-mods" value="0">
                 </div>
             </div>
 
@@ -263,6 +237,20 @@
                     </svg>
                     <span data-i18n="ct.convert">Chuyển mã</span>
                 </button>
+            </div>
+        </div>
+
+        <!-- Capture overlay (hidden by default).
+             Keydown is captured at document-level by shared/hotkey-capture.js. -->
+        <div class="capture-overlay" id="capture-overlay" style="display:none">
+            <div class="capture-box">
+                <div class="capture-prompt" data-i18n="ct.capture_prompt">Nhấn phím tắt chuyển mã…</div>
+                <div class="capture-preview" id="capture-preview">—</div>
+                <div class="button-row">
+                    <button class="btn-action btn-primary" id="btn-capture-save" disabled data-i18n="save">Lưu</button>
+                    <button class="btn-action btn-secondary" id="btn-capture-cancel" data-i18n="cancel">Hủy</button>
+                </div>
+                <div class="capture-hint" data-i18n="ct.capture_hint">Nhấn phím kèm Ctrl/Shift/Alt/Win. F1-F12 đều dùng được.</div>
             </div>
         </div>
 

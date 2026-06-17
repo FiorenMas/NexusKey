@@ -1,5 +1,5 @@
-// NexusKey - Spell Check Exclusions Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Spell Check Exclusions Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SpellExclusionsDialog.h"
 #include "helpers/AppHelpers.h"
@@ -17,7 +17,7 @@ namespace NextKey {
 SpellExclusionsDialog::SpellExclusionsDialog(HWND parent)
     : SciterSubDialog({
         L"this://app/spellexclusions/spellexclusions.html",
-        L"NexusKey - Spell Exclusions",
+        L"VKey - Spell Exclusions",
         340, 380, parent, true, 36, 40, true
     }) {
     auto config = ConfigManager::LoadOrDefault();
@@ -147,20 +147,14 @@ void SpellExclusionsDialog::importExclusions() {
         entries_.clear();
     }
 
-    std::string line;
-    while (std::getline(infile, line)) {
-        // Trim CR (Windows line endings)
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        // Skip empty lines and comments
-        if (line.empty() || line[0] == ';') continue;
-
+    ParseConfigLines(infile, [&](const std::string& line) {
         std::wstring wName = Utf8ToWide(line);
-        if (wName.empty()) continue;
-        for (auto& ch : wName) ch = towlower(ch);  // Store pre-lowercased
+        if (wName.empty()) return;
+        for (auto& ch : wName) ch = towlower(ch);
         if (std::find(entries_.begin(), entries_.end(), wName) == entries_.end()) {
             entries_.push_back(wName);
         }
-    }
+    });
 
     std::sort(entries_.begin(), entries_.end());
     populateList();
@@ -172,14 +166,14 @@ void SpellExclusionsDialog::exportExclusions() {
         get_hwnd(),
         L"Text file (*.txt)\0*.txt\0",
         L"txt",
-        L"NexusKeySpellExclusions"
+        L"VKeySpellExclusions"
     );
     if (path.empty()) return;
 
     std::ofstream outfile(path);
     if (!outfile.is_open()) return;
 
-    outfile << ";NexusKey Spell Exclusions\n";
+    outfile << ";VKey Spell Exclusions\n";
 
     std::vector<std::wstring> sorted = entries_;
     std::sort(sorted.begin(), sorted.end());

@@ -1,5 +1,5 @@
-// NexusKey - Startup Helper (Windows-only)
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Startup Helper (Windows-only)
+// SPDX-License-Identifier: AGPL-3.0-only
 //
 // Manages run-on-startup registration via Registry (normal) or
 // Task Scheduler (admin/elevated). Pattern from OpenKey.
@@ -30,12 +30,14 @@ namespace NextKey {
 
 /// Registry key path for user-level startup programs
 inline constexpr const wchar_t* STARTUP_REG_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-inline constexpr const wchar_t* STARTUP_REG_VALUE = L"NexusKey";
-inline constexpr const wchar_t* STARTUP_TASK_NAME = L"NexusKey";
+inline constexpr const wchar_t* STARTUP_REG_VALUE = L"VKey";
+inline constexpr const wchar_t* STARTUP_TASK_NAME = L"VKey";
+inline constexpr const wchar_t* WATCHDOG_TASK_NAME = L"\\VKey\\Watchdog";
 
 // Forward declaration — defined below. RemoveScheduledTask() calls this before
 // its definition appears in the file.
 [[nodiscard]] inline bool IsScheduledTaskRegistered() noexcept;
+[[nodiscard]] inline bool IsWatchdogTaskRegistered() noexcept;
 
 /// Check if the current process is running with admin privileges
 [[nodiscard]] inline bool IsRunningAsAdmin() noexcept {
@@ -80,6 +82,21 @@ enum class AdminRestartResult {
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     return L"\"" + std::wstring(path) + L"\"";
+}
+
+/// Get the directory of the current executable (no trailing slash).
+/// Returns empty string if GetModuleFileNameW or path parsing fails.
+[[nodiscard]] inline std::wstring GetInstallDirectory() noexcept {
+    wchar_t path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) {
+        return {};
+    }
+    std::wstring pathStr(path);
+    auto slash = pathStr.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) {
+        return {};
+    }
+    return pathStr.substr(0, slash);
 }
 
 /// Remove the registry startup entry (HKCU\...\Run)
@@ -182,6 +199,65 @@ inline void RemoveRegistryStartup() noexcept {
     return true;
 }
 
+/// Create the watchdog scheduled task at \VKey\Watchdog.
+/// Differences from CreateScheduledTaskElevated():
+///   - Action: VKeyWatchdog.exe (sibling of VKey.exe in install dir)
+///   - Trigger delay: 10s (let VKey come up first; main task uses 5s)
+///   - Settings: RestartCount=3, RestartInterval=1min for self-healing if
+///     the watchdog itself dies (Win10+).
+///   - Principal RunLevel: Limited (NOT Highest) — process supervisor doesn't
+///     need elevation. Keeps AV calm, no UAC needed at logon.
+///   - Task path: \VKey\Watchdog (user-root folder, visible in Task
+///     Scheduler MMC for user debug).
+/// Requires UAC to register under \VKey\ folder.
+[[nodiscard]] inline bool CreateWatchdogScheduledTask() noexcept {
+    std::wstring dirStr = GetInstallDirectory();
+    if (dirStr.empty()) return false;
+    std::wstring watchdogPath = dirStr + L"\\VKeyWatchdog.exe";
+
+    // Get current username BEFORE elevation — ensures task triggers for the
+    // logged-in user, not the admin account used for UAC elevation.
+    wchar_t username[256] = {};
+    DWORD usernameSize = 256;
+    GetUserNameW(username, &usernameSize);
+
+    // PowerShell registers the task. Watchdog runs at LIMITED RunLevel
+    // (NOT Highest) — keeps AV calm, no UAC needed at logon.
+    std::wstring ps1Args = L"-NoProfile -WindowStyle Hidden -Command \"";
+    ps1Args += L"$A = New-ScheduledTaskAction -Execute '\"" + watchdogPath + L"\"' -WorkingDirectory '" + dirStr + L"'; ";
+    ps1Args += L"$T = New-ScheduledTaskTrigger -AtLogOn; ";
+    ps1Args += L"$T.Delay = 'PT10S'; ";  // 10s after logon — let VKey come up first
+    ps1Args += L"$S = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1); ";
+    ps1Args += L"$P = New-ScheduledTaskPrincipal -UserId '" + EscapePowerShellSingleQuote(username) + L"' -LogonType Interactive -RunLevel Limited; ";
+    ps1Args += L"Register-ScheduledTask -TaskName '" + std::wstring(WATCHDOG_TASK_NAME) + L"' -Action $A -Trigger $T -Settings $S -Principal $P -Force\"";
+
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.lpVerb = L"runas";  // UAC required to write \VKey\ Task Scheduler folder
+    sei.lpFile = L"powershell.exe";
+    sei.lpParameters = ps1Args.c_str();
+    sei.nShow = SW_HIDE;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+
+    if (!ShellExecuteExW(&sei)) return false;
+
+    if (sei.hProcess) {
+        WaitForSingleObject(sei.hProcess, 10000);
+        DWORD exitCode = 1;
+        GetExitCodeProcess(sei.hProcess, &exitCode);
+        CloseHandle(sei.hProcess);
+        return exitCode == 0;
+    }
+    return true;
+}
+
+/// Remove the watchdog scheduled task at \VKey\Watchdog.
+/// No-op if task doesn't exist. Requires UAC.
+inline void RemoveWatchdogScheduledTask() noexcept {
+    if (!IsWatchdogTaskRegistered()) return;
+    std::wstring args = L"/delete /tn \"" + std::wstring(WATCHDOG_TASK_NAME) + L"\" /f";
+    (void)RunSchtasksElevated(args.c_str());
+}
+
 /// Register or unregister run-on-startup.
 ///
 /// - enable + !asAdmin → Registry entry (normal startup)
@@ -220,7 +296,7 @@ inline void RegisterRunOnStartup(bool enable, bool asAdmin) {
 [[nodiscard]] inline std::wstring GetDesktopShortcutPath() {
     std::wstring desktop = GetDesktopPath();
     if (desktop.empty()) return {};
-    return desktop + L"\\NexusKey.lnk";
+    return desktop + L"\\VKey.lnk";
 }
 
 /// Create a desktop shortcut (.lnk) pointing to the current executable.
@@ -252,7 +328,7 @@ inline bool CreateDesktopShortcut() {
 
     pShellLink->SetPath(exePath);
     pShellLink->SetWorkingDirectory(workDir.c_str());
-    pShellLink->SetDescription(L"NexusKey Vietnamese Input");
+    pShellLink->SetDescription(L"VKey Vietnamese Input");
     pShellLink->SetIconLocation(exePath, 0);
 
     IPersistFile* pPersistFile = nullptr;
@@ -288,6 +364,31 @@ inline void SetDesktopShortcut(bool enable) {
 /// Check if the scheduled task exists (non-elevated query, no UAC prompt)
 [[nodiscard]] inline bool IsScheduledTaskRegistered() noexcept {
     std::wstring cmdLine = L"schtasks.exe /query /tn \"" + std::wstring(STARTUP_TASK_NAME) + L"\"";
+
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        return false;
+    }
+
+    WaitForSingleObject(pi.hProcess, 5000);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    return exitCode == 0;
+}
+
+/// Check if the watchdog scheduled task exists at \VKey\Watchdog
+/// (non-elevated query, no UAC prompt).
+[[nodiscard]] inline bool IsWatchdogTaskRegistered() noexcept {
+    std::wstring cmdLine = L"schtasks.exe /query /tn \"" +
+                            std::wstring(WATCHDOG_TASK_NAME) + L"\"";
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESHOWWINDOW;

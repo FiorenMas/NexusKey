@@ -1,5 +1,5 @@
-// NexusKey - CodeTableConverter Unit Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - CodeTableConverter Unit Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/engine/CodeTableConverter.h"
@@ -454,44 +454,70 @@ TEST(CodeTableConverter, ToLower_ASCII) {
     EXPECT_EQ(CodeTableConverter::ToLower(L"HELLO"), L"hello");
 }
 
-// --- CapitalizeFirstOfSentence tests ---
+// --- ToSentenceCase tests ---
 
-TEST(CodeTableConverter, CapitalizeFirst_Simple) {
-    auto result = CodeTableConverter::CapitalizeFirstOfSentence(L"hello world. goodbye world.");
+TEST(CodeTableConverter, ToSentenceCase_Simple) {
+    auto result = CodeTableConverter::ToSentenceCase(L"hello world. goodbye world.");
     EXPECT_EQ(result, L"Hello world. Goodbye world.");
 }
 
-TEST(CodeTableConverter, CapitalizeFirst_AfterNewline) {
-    auto result = CodeTableConverter::CapitalizeFirstOfSentence(L"hello.\nworld");
+TEST(CodeTableConverter, ToSentenceCase_AfterNewline) {
+    auto result = CodeTableConverter::ToSentenceCase(L"hello.\nworld");
     EXPECT_EQ(result, L"Hello.\nWorld");
 }
 
-TEST(CodeTableConverter, CapitalizeFirst_Vietnamese) {
+TEST(CodeTableConverter, ToSentenceCase_Vietnamese) {
     // "việt nam. đẹp lắm!" → "Việt nam. Đẹp lắm!"
     std::wstring input = L"vi\x1EC7t nam. \x0111\x1EB9p l\x1EAFm!";
-    auto result = CodeTableConverter::CapitalizeFirstOfSentence(input);
-    // First char 'v' → 'V', after '. ' → 'đ' → 'Đ'
-    EXPECT_EQ(result[0], L'V');  // V
-    // Find the đ after ". "
-    size_t pos = result.find(L'\x0110');  // Đ
-    EXPECT_NE(pos, std::wstring::npos);
+    auto result = CodeTableConverter::ToSentenceCase(input);
+    EXPECT_EQ(result, L"Vi\x1EC7t nam. \x0110\x1EB9p l\x1EAFm!");
 }
 
-// --- CapitalizeEachWord tests ---
+TEST(CodeTableConverter, ToSentenceCase_Empty) {
+    EXPECT_EQ(CodeTableConverter::ToSentenceCase(L""), L"");
+}
 
-TEST(CodeTableConverter, CapitalizeEachWord_Simple) {
-    auto result = CodeTableConverter::CapitalizeEachWord(L"hello world test");
+TEST(CodeTableConverter, ToSentenceCase_FromUppercase) {
+    EXPECT_EQ(CodeTableConverter::ToSentenceCase(L"HELLO WORLD"), L"Hello world");
+}
+
+TEST(CodeTableConverter, ToSentenceCase_Vietnamese_Uppercase) {
+    // "VIỆT NAM ĐẸP" → "Việt nam đẹp"
+    std::wstring input = L"VI\x1EC6T NAM \x0110\x1EB8P";
+    auto result = CodeTableConverter::ToSentenceCase(input);
+    EXPECT_EQ(result, L"Vi\x1EC7t nam \x0111\x1EB9p");
+}
+
+TEST(CodeTableConverter, ToSentenceCase_MixedPunctuation) {
+    EXPECT_EQ(CodeTableConverter::ToSentenceCase(L"HELLO.\nWORLD"), L"Hello.\nWorld");
+}
+
+// --- ToTitleCase tests ---
+
+TEST(CodeTableConverter, ToTitleCase_Simple) {
+    auto result = CodeTableConverter::ToTitleCase(L"hello world test");
     EXPECT_EQ(result, L"Hello World Test");
 }
 
-TEST(CodeTableConverter, CapitalizeEachWord_Vietnamese) {
+TEST(CodeTableConverter, ToTitleCase_Vietnamese) {
     std::wstring input = L"vi\x1EC7t nam \x0111\x1EB9p";  // việt nam đẹp
-    auto result = CodeTableConverter::CapitalizeEachWord(input);
-    EXPECT_EQ(result[0], L'V');  // V
-    // After "Vi\x1EC7t " → N
-    size_t spacePos = result.find(L' ');
-    EXPECT_NE(spacePos, std::wstring::npos);
-    EXPECT_EQ(result[spacePos + 1], L'N');  // N
+    auto result = CodeTableConverter::ToTitleCase(input);
+    EXPECT_EQ(result, L"Vi\x1EC7t Nam \x0110\x1EB9p");
+}
+
+TEST(CodeTableConverter, ToTitleCase_Empty) {
+    EXPECT_EQ(CodeTableConverter::ToTitleCase(L""), L"");
+}
+
+TEST(CodeTableConverter, ToTitleCase_FromUppercase) {
+    EXPECT_EQ(CodeTableConverter::ToTitleCase(L"HELLO WORLD"), L"Hello World");
+}
+
+TEST(CodeTableConverter, ToTitleCase_Vietnamese_Uppercase) {
+    // "ĐÂY LÀ TEST" → "Đây Là Test"
+    std::wstring input = L"\x0110\x00C2Y L\x00C0 TEST";
+    auto result = CodeTableConverter::ToTitleCase(input);
+    EXPECT_EQ(result, L"\x0110\x00E2y L\x00E0 Test");
 }
 
 // --- Cross-table conversion tests ---

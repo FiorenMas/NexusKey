@@ -1,9 +1,11 @@
-// NexusKey - ConfigManager Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - ConfigManager Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/config/ConfigManager.h"
+#include "core/hotkey/HotkeyRegistry.h"
 #include "core/UIConfig.h"
+#include <algorithm>
 #include <fstream>
 #include <filesystem>
 
@@ -300,6 +302,307 @@ TEST_F(ConfigManagerTest, UIConfig_DefaultConstructor) {
     EXPECT_FALSE(config.showAdvanced);
     EXPECT_EQ(config.backgroundOpacity, 80);
     EXPECT_FALSE(config.pinned);
+}
+
+// ============================================================================
+// SaveHotkeyRegistry — TSF mirror of [features].esc_restore_raw
+//
+// SaveHotkeyRegistry MUST keep [features].esc_restore_raw in sync with
+// "CancelComposition intent is enabled AND has bare-Esc trigger" so the TSF
+// EngineController gate stays consistent with the v3 Hotkeys UI. Without
+// this, disabling cancel-composition in the dialog wouldn't reach TSF hosts
+// (Word, Edge in TSF mode) — they'd keep restoring raw keys on Esc.
+// Phase 2 will route TSF through HotkeyRegistry directly and drop the mirror.
+// ============================================================================
+
+namespace {
+constexpr uint32_t kVkEsc = 0x1B;
+[[nodiscard]] bool ReadEscRestoreRaw(const std::wstring& path) {
+    auto cfg = ConfigManager::LoadFromFile(path);
+    return cfg && cfg->escRestoreRawEnabled;
+}
+}  // namespace
+
+TEST_F(ConfigManagerTest, SaveHotkeyRegistry_EscBound_EnabledSetsTrue) {
+    HotkeyRegistry reg = HotkeyRegistry::Defaults();  // Esc bound + enabled
+    ASSERT_TRUE(ConfigManager::SaveHotkeyRegistry(testConfigPath_, reg));
+    EXPECT_TRUE(ReadEscRestoreRaw(testConfigPath_));
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyRegistry_EscBound_DisabledSetsFalse) {
+    HotkeyRegistry reg = HotkeyRegistry::Defaults();
+    reg.SetEnabled(Intent::CancelComposition, false);
+    ASSERT_TRUE(ConfigManager::SaveHotkeyRegistry(testConfigPath_, reg));
+    EXPECT_FALSE(ReadEscRestoreRaw(testConfigPath_))
+        << "Disabling cancel-composition must clear TSF gate even when Esc trigger still stored";
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyRegistry_NoBareEscTrigger_SetsFalse) {
+    // Only Ctrl+Esc bound (not bare Esc). TSF gate must be off because the
+    // legacy `esc_restore_raw` semantic was "bare Esc restores raw".
+    HotkeyRegistry reg;
+    reg.SetEnabled(Intent::CancelComposition, true);
+    reg.AddTrigger(Intent::CancelComposition, Trigger{kVkEsc, kModCtrl, false});
+    ASSERT_TRUE(ConfigManager::SaveHotkeyRegistry(testConfigPath_, reg));
+    EXPECT_FALSE(ReadEscRestoreRaw(testConfigPath_))
+        << "Bare-Esc binding required for TSF gate; chord doesn't count";
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyRegistry_EscPlusChord_BareEscWins) {
+    HotkeyRegistry reg;
+    reg.SetEnabled(Intent::CancelComposition, true);
+    reg.AddTrigger(Intent::CancelComposition, Trigger{kVkEsc, 0,        false});
+    reg.AddTrigger(Intent::CancelComposition, Trigger{kVkEsc, kModCtrl, false});
+    ASSERT_TRUE(ConfigManager::SaveHotkeyRegistry(testConfigPath_, reg));
+    EXPECT_TRUE(ReadEscRestoreRaw(testConfigPath_));
+}
+
+// ============================================================================
+// HotkeyConfig (V/E toggle + convert) schema migration: `key` (wchar_t) →
+// `vk` (uint32_t). Both top-level [hotkey] and nested [convert.hotkey].
+// ============================================================================
+
+TEST_F(ConfigManagerTest, LoadHotkeyConfig_LegacyKeyChar_MigratesToVk) {
+    WriteTestConfig(R"(
+[hotkey]
+ctrl = false
+shift = false
+alt = true
+win = false
+key = "Z"
+)");
+    auto cfg = ConfigManager::LoadHotkeyConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->vk, 0x5Au);   // VK_Z
+    EXPECT_TRUE(cfg->alt);
+    EXPECT_FALSE(cfg->ctrl);
+}
+
+TEST_F(ConfigManagerTest, LoadHotkeyConfig_NewVkSchema_LoadedDirect) {
+    WriteTestConfig(R"(
+[hotkey]
+ctrl = true
+shift = true
+alt = false
+win = false
+vk = 112
+)");
+    auto cfg = ConfigManager::LoadHotkeyConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->vk, 0x70u);   // VK_F1
+    EXPECT_TRUE(cfg->ctrl);
+    EXPECT_TRUE(cfg->shift);
+}
+
+TEST_F(ConfigManagerTest, LoadHotkeyConfig_VkWinsOverLegacyKey) {
+    // If both `vk` and `key` are present, `vk` wins — legacy is fallback only.
+    WriteTestConfig(R"(
+[hotkey]
+ctrl = false
+shift = false
+alt = false
+win = false
+vk = 90
+key = "A"
+)");
+    auto cfg = ConfigManager::LoadHotkeyConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->vk, 0x5Au);   // VK_Z from `vk`, NOT 0x41 from `key`
+}
+
+TEST_F(ConfigManagerTest, LoadHotkeyConfig_LegacyOemDropsToZero) {
+    // ~/`/etc are OEM keys — clean rule rejects, vk=0 (user reassigns).
+    WriteTestConfig(R"(
+[hotkey]
+ctrl = false
+shift = false
+alt = true
+win = false
+key = "~"
+)");
+    auto cfg = ConfigManager::LoadHotkeyConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->vk, 0u);
+    EXPECT_TRUE(cfg->alt);       // Modifiers preserved even when vk drops.
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyConfig_RoundTripPreservesFRowVk) {
+    HotkeyConfig original{};
+    original.ctrl = true;
+    original.shift = true;
+    original.vk = 0x74;  // VK_F5
+
+    ASSERT_TRUE(ConfigManager::SaveHotkeyConfig(testConfigPath_, original));
+    auto loaded = ConfigManager::LoadHotkeyConfig(testConfigPath_);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->vk, 0x74u);
+    EXPECT_TRUE(loaded->ctrl);
+    EXPECT_TRUE(loaded->shift);
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyConfig_DropsLegacyKeyField) {
+    // After save, the TOML file must contain `vk = N` but NOT a legacy
+    // `key = "..."` field — even if the previous file had one (we replace
+    // the [hotkey] sub-table entirely on save).
+    WriteTestConfig(R"(
+[hotkey]
+key = "Z"
+ctrl = true
+alt = false
+shift = false
+win = false
+)");
+    HotkeyConfig cfg{};
+    cfg.alt = true;
+    cfg.vk = 0x70;  // VK_F1
+    ASSERT_TRUE(ConfigManager::SaveHotkeyConfig(testConfigPath_, cfg));
+
+    std::ifstream in("test_config.toml");
+    std::string content((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("vk ="), std::string::npos);
+    EXPECT_EQ(content.find("key ="), std::string::npos)
+        << "Legacy `key` field must be dropped after save";
+}
+
+TEST_F(ConfigManagerTest, LoadConvertConfig_LegacyKeyChar_MigratesToVk) {
+    WriteTestConfig(R"(
+[convert.hotkey]
+ctrl = true
+shift = false
+alt = false
+win = false
+key = "1"
+)");
+    auto cfg = ConfigManager::LoadConvertConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->hotkey.vk, 0x31u);   // VK_1 (digit-1 ASCII == VK_1)
+    EXPECT_TRUE(cfg->hotkey.ctrl);
+}
+
+TEST_F(ConfigManagerTest, LoadConvertConfig_NewVkSchemaFRow) {
+    WriteTestConfig(R"(
+[convert.hotkey]
+ctrl = false
+shift = true
+alt = false
+win = false
+vk = 123
+)");
+    auto cfg = ConfigManager::LoadConvertConfig(testConfigPath_);
+    ASSERT_TRUE(cfg.has_value());
+    EXPECT_EQ(cfg->hotkey.vk, 0x7Bu);   // VK_F12
+    EXPECT_TRUE(cfg->hotkey.shift);
+}
+
+TEST_F(ConfigManagerTest, SaveHotkeyRegistry_DoesNotClobberExistingFeatures) {
+    // Pre-write [features] with unrelated keys — SaveHotkeyRegistry must
+    // merge in place, only touching esc_restore_raw.
+    WriteTestConfig(R"(
+[features]
+spell_check = true
+modern_ortho = true
+)");
+
+    HotkeyRegistry reg = HotkeyRegistry::Defaults();
+    ASSERT_TRUE(ConfigManager::SaveHotkeyRegistry(testConfigPath_, reg));
+
+    auto loaded = ConfigManager::LoadFromFile(testConfigPath_);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_TRUE(loaded->spellCheckEnabled)    << "Existing spell_check must survive merge";
+    EXPECT_TRUE(loaded->modernOrtho)          << "Existing modern_ortho must survive merge";
+    EXPECT_TRUE(loaded->escRestoreRawEnabled) << "esc_restore_raw added by mirror";
+}
+
+// ============================================================================
+// Per-app mode lock — [excluded_apps].list (E) + .force_vn (V)
+// ============================================================================
+
+TEST_F(ConfigManagerTest, LoadForcedVnApps_ParsesForceVnArray) {
+    WriteTestConfig(R"(
+[excluded_apps]
+list = ["game.exe"]
+force_vn = ["zalo.exe", "messenger.exe"]
+)");
+    auto excluded = ConfigManager::LoadAllExcludedApps(testConfigPath_);
+    auto forcedVn = ConfigManager::LoadForcedVnApps(testConfigPath_);
+    ASSERT_EQ(excluded.size(), 1u);
+    EXPECT_EQ(excluded[0], L"game.exe");
+    ASSERT_EQ(forcedVn.size(), 2u);
+    EXPECT_NE(std::find(forcedVn.begin(), forcedVn.end(), L"zalo.exe"), forcedVn.end());
+    EXPECT_NE(std::find(forcedVn.begin(), forcedVn.end(), L"messenger.exe"), forcedVn.end());
+}
+
+TEST_F(ConfigManagerTest, LoadForcedVnApps_AbsentKeyReturnsEmpty_BackwardCompat) {
+    // A config written before this feature has only [excluded_apps].list.
+    WriteTestConfig(R"(
+[excluded_apps]
+list = ["legacy.exe"]
+)");
+    EXPECT_EQ(ConfigManager::LoadAllExcludedApps(testConfigPath_).size(), 1u);
+    EXPECT_TRUE(ConfigManager::LoadForcedVnApps(testConfigPath_).empty());
+}
+
+TEST_F(ConfigManagerTest, SaveForcedVnApps_PreservesExcludedList) {
+    WriteTestConfig(R"(
+[excluded_apps]
+list = ["game.exe", "mstsc.exe"]
+)");
+    ASSERT_TRUE(ConfigManager::SaveForcedVnApps(testConfigPath_, {L"zalo.exe"}));
+    // The E list must survive a V-only save (read-modify-write, not clobber).
+    auto excluded = ConfigManager::LoadAllExcludedApps(testConfigPath_);
+    auto forcedVn = ConfigManager::LoadForcedVnApps(testConfigPath_);
+    EXPECT_EQ(excluded.size(), 2u);
+    ASSERT_EQ(forcedVn.size(), 1u);
+    EXPECT_EQ(forcedVn[0], L"zalo.exe");
+}
+
+TEST_F(ConfigManagerTest, SaveExcludedApps_PreservesForceVnList) {
+    WriteTestConfig(R"(
+[excluded_apps]
+list = ["old.exe"]
+force_vn = ["zalo.exe"]
+)");
+    ASSERT_TRUE(ConfigManager::SaveExcludedApps(testConfigPath_, {L"game.exe"}));
+    auto excluded = ConfigManager::LoadAllExcludedApps(testConfigPath_);
+    auto forcedVn = ConfigManager::LoadForcedVnApps(testConfigPath_);
+    ASSERT_EQ(excluded.size(), 1u);
+    EXPECT_EQ(excluded[0], L"game.exe");
+    ASSERT_EQ(forcedVn.size(), 1u)  << "force_vn must survive an E-list save";
+    EXPECT_EQ(forcedVn[0], L"zalo.exe");
+}
+
+TEST_F(ConfigManagerTest, SaveAndLoad_UnicodePath) {
+    std::wstring unicodePath = L"cấu_hình_tiếng_việt.toml";
+    std::filesystem::remove(std::filesystem::path(unicodePath));
+
+    TypingConfig config;
+    config.inputMethod = InputMethod::VNI;
+    config.spellCheckEnabled = true;
+    config.optimizeLevel = 2;
+
+    EXPECT_TRUE(ConfigManager::SaveToFile(unicodePath, config));
+    
+    // Reload and verify
+    auto loaded = ConfigManager::LoadFromFile(unicodePath);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->inputMethod, InputMethod::VNI);
+    EXPECT_TRUE(loaded->spellCheckEnabled);
+    EXPECT_EQ(loaded->optimizeLevel, 2);
+
+    // Test UIConfig save/load with Unicode path
+    UIConfig uiConfig;
+    uiConfig.showAdvanced = true;
+    uiConfig.backgroundOpacity = 65;
+    EXPECT_TRUE(ConfigManager::SaveUIConfig(unicodePath, uiConfig));
+
+    auto loadedUI = ConfigManager::LoadUIConfig(unicodePath);
+    ASSERT_TRUE(loadedUI.has_value());
+    EXPECT_TRUE(loadedUI->showAdvanced);
+    EXPECT_EQ(loadedUI->backgroundOpacity, 65);
+
+    // Cleanup
+    std::filesystem::remove(std::filesystem::path(unicodePath));
 }
 
 }  // namespace

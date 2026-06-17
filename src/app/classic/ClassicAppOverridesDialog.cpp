@@ -1,5 +1,5 @@
-// NexusKey Classic — App Overrides Dialog Implementation
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — App Overrides Dialog Implementation
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "ClassicAppOverridesDialog.h"
 #include "core/CrashLog.h"
@@ -17,6 +17,7 @@ enum {
     IDC_COMBO_APP,
     IDC_COMBO_METHOD,
     IDC_COMBO_ENCODING,
+    IDC_COMBO_SENDMETHOD,
     IDC_BTN_ADD,
     IDC_BTN_PICK,
     IDC_BTN_DELETE,
@@ -65,8 +66,8 @@ bool ClassicAppOverridesDialog::Init(HINSTANCE hInstance, HWND parent, bool forc
     RECT rc = {0, 0, w, h};
     AdjustWindowRectEx(&rc, style, FALSE, WS_EX_TOPMOST);
     int aw = rc.right - rc.left, ah = rc.bottom - rc.top;
-    int sx = GetSystemMetrics(SM_CXSCREEN), sy = GetSystemMetrics(SM_CYSCREEN);
-    SetWindowPos(hwnd_, nullptr, (sx - aw) / 2, (sy - ah) / 2, aw, ah, SWP_NOZORDER);
+    POINT pt = NextKey::GetCenteredPos(hwnd_, aw, ah);
+    SetWindowPos(hwnd_, nullptr, pt.x, pt.y, aw, ah, SWP_NOZORDER);
 
     theme_.Init(hwnd_, forceLightTheme);
     theme_.ApplyWindowAttributes(hwnd_);
@@ -104,14 +105,17 @@ void ClassicAppOverridesDialog::CreateControls() {
     LVCOLUMNW col{};
     col.mask = LVCF_TEXT | LVCF_WIDTH;
     col.pszText = const_cast<wchar_t*>(L"Ứng dụng");
-    col.cx = Dpi(140);
+    col.cx = Dpi(120);
     ListView_InsertColumn(listView_, 0, &col);
     col.pszText = const_cast<wchar_t*>(L"Kiểu gõ");
-    col.cx = Dpi(100);
+    col.cx = Dpi(80);
     ListView_InsertColumn(listView_, 1, &col);
     col.pszText = const_cast<wchar_t*>(L"Bảng mã");
-    col.cx = cw - Dpi(140 + 100 + 24);
+    col.cx = Dpi(100);
     ListView_InsertColumn(listView_, 2, &col);
+    col.pszText = const_cast<wchar_t*>(L"Kiểu gửi");
+    col.cx = cw - Dpi(120 + 80 + 100 + 24);
+    ListView_InsertColumn(listView_, 3, &col);
     y += listH + gap;
 
     // Row 1: app combobox + add + pick button
@@ -158,6 +162,8 @@ void ClassicAppOverridesDialog::CreateControls() {
     ComboBox_AddString(comboMethod_, L"Telex");
     ComboBox_AddString(comboMethod_, L"VNI");
     ComboBox_AddString(comboMethod_, L"Simple Telex");
+    ComboBox_AddString(comboMethod_, L"Telex + VNI");
+    ComboBox_AddString(comboMethod_, L"Tự định nghĩa");
     ComboBox_SetCurSel(comboMethod_, 0);
 
     int col2X = x + lblW + comboW + gap;
@@ -176,12 +182,30 @@ void ClassicAppOverridesDialog::CreateControls() {
     ComboBox_AddString(comboEncoding_, L"Việt CP1258");
     ComboBox_SetCurSel(comboEncoding_, 0);
 
+    // Row 3: Send Method combo + Delete button
+    int y3 = y + rowH + gap;
+    int labelY3 = y3 + (rowH - lblH) / 2;
+
+    CreateWindowExW(0, L"STATIC", L"Kiểu gửi:",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        x, labelY3, lblW, lblH, hwnd_, nullptr, hInstance_, nullptr);
+    comboSendMethod_ = CreateWindowExW(0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_TABSTOP,
+        x + lblW, y3, comboW, Dpi(120), hwnd_, reinterpret_cast<HMENU>(IDC_COMBO_SENDMETHOD), hInstance_, nullptr);
+    SendMessageW(comboSendMethod_, CB_SETITEMHEIGHT, (WPARAM)-1, comboInnerH);
+    ComboBox_AddString(comboSendMethod_, L"Theo mặc định");
+    ComboBox_AddString(comboSendMethod_, L"Clipboard");
+    ComboBox_AddString(comboSendMethod_, L"Tương thích Firefox");
+    ComboBox_AddString(comboSendMethod_, L"Tương thích Cloud/Remote");
+    ComboBox_AddString(comboSendMethod_, L"Thay thế trực tiếp (EM_REPLACESEL)");
+    ComboBox_SetCurSel(comboSendMethod_, 0);
+
     int deleteW = Dpi(70);
     btnDelete_ = CreateWindowExW(0, L"BUTTON", L"Xoá",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        x + cw - deleteW, y, deleteW, rowH, hwnd_, reinterpret_cast<HMENU>(IDC_BTN_DELETE), hInstance_, nullptr);
+        x + cw - deleteW, y3, deleteW, rowH, hwnd_, reinterpret_cast<HMENU>(IDC_BTN_DELETE), hInstance_, nullptr);
 
-    y += rowH + gap * 2;
+    y = y3 + rowH + gap * 2;
 }
 
 static const wchar_t* MethodName(int8_t m) {
@@ -189,6 +213,8 @@ static const wchar_t* MethodName(int8_t m) {
         case 0: return L"Telex";
         case 1: return L"VNI";
         case 2: return L"Simple Telex";
+        case 3: return L"Telex + VNI";
+        case 4: return L"Tự định nghĩa";
         default: return L"Mặc định";
     }
 }
@@ -200,6 +226,16 @@ static const wchar_t* EncodingName(int8_t e) {
         case 2: return L"VNI Windows";
         case 3: return L"Unicode tổ hợp";
         case 4: return L"Việt CP1258";
+        default: return L"Mặc định";
+    }
+}
+
+static const wchar_t* SendMethodName(int8_t m) {
+    switch (m) {
+        case 1: return L"Clipboard";
+        case 2: return L"Firefox";
+        case 3: return L"Cloud/Remote";
+        case 4: return L"Thay thế trực tiếp";
         default: return L"Mặc định";
     }
 }
@@ -220,6 +256,7 @@ void ClassicAppOverridesDialog::PopulateList() {
 
         ListView_SetItemText(listView_, i, 1, const_cast<wchar_t*>(MethodName(sorted[i].second.inputMethod)));
         ListView_SetItemText(listView_, i, 2, const_cast<wchar_t*>(EncodingName(sorted[i].second.encodingOverride)));
+        ListView_SetItemText(listView_, i, 3, const_cast<wchar_t*>(SendMethodName(sorted[i].second.sendMethod)));
     }
 }
 
@@ -233,10 +270,14 @@ void ClassicAppOverridesDialog::AddOverride() {
 
     int methodSel = ComboBox_GetCurSel(comboMethod_);
     int encodingSel = ComboBox_GetCurSel(comboEncoding_);
+    int sendSel = ComboBox_GetCurSel(comboSendMethod_);
 
     AppOverrideEntry entry;
     entry.inputMethod = static_cast<int8_t>(methodSel - 1);   // 0="default"→-1, 1=Telex→0, etc.
     entry.encodingOverride = static_cast<int8_t>(encodingSel - 1);
+    // Combo index lines up 1:1 with the stored value (1=Clipboard,
+    // 2=Firefox-compat, 3=Cloud/Remote-compat); index 0 ("Theo mặc định") → -1.
+    entry.sendMethod = static_cast<int8_t>((sendSel >= 1) ? sendSel : -1);
 
     entries_[app] = entry;
     PopulateList();
@@ -245,6 +286,7 @@ void ClassicAppOverridesDialog::AddOverride() {
     SetWindowTextW(comboApp_, L"");
     ComboBox_SetCurSel(comboMethod_, 0);
     ComboBox_SetCurSel(comboEncoding_, 0);
+    ComboBox_SetCurSel(comboSendMethod_, 0);
 }
 
 void ClassicAppOverridesDialog::DeleteSelected() {

@@ -1,5 +1,5 @@
-// NexusKey Classic — Excluded Apps Dialog
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — Excluded Apps Dialog
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -10,6 +10,7 @@
 #include <commctrl.h>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace NextKey::Classic {
 
@@ -26,8 +27,9 @@ private:
     bool Init(HINSTANCE hInstance, HWND parent, bool forceLightTheme);
     void CreateControls();
     void PopulateList();
-    void AddApp(const std::wstring& name);
+    void AddApp(const std::wstring& name, int mode);
     void DeleteSelected();
+    void ToggleSelectedMode();   // double-click a row → flip E↔V
     void ImportFromFile();
     void ExportToFile();
     void OnPickWindow();
@@ -54,17 +56,20 @@ private:
     // Controls
     HWND listView_ = nullptr;
     HWND comboRunning_ = nullptr;
+    HWND comboMode_ = nullptr;
     HWND btnAdd_ = nullptr;
     HWND btnPick_ = nullptr;
     HWND btnDelete_ = nullptr;
     HWND btnImport_ = nullptr;
     HWND btnExport_ = nullptr;
 
-    // State
-    std::vector<std::wstring> appList_;
+    // State — per-app mode lock: mode 0 = E (excluded/transparent), 1 = V (force VN).
+    static constexpr int kModeE = 0;
+    static constexpr int kModeV = 1;
+    std::vector<std::pair<std::wstring, int>> appList_;
     WindowPicker picker_;
 
-    static constexpr const wchar_t* kClassName = L"NexusKeyExcludedApps";
+    static constexpr const wchar_t* kClassName = L"VKeyExcludedApps";
 };
 
 }  // namespace NextKey::Classic

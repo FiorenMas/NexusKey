@@ -1,0 +1,98 @@
+/* User Defined Input Dialog Styles */
+
+.content-section {
+    padding: 10px;
+    min-height: 0;
+}
+
+.settings-card {
+    background: var(--bg-card-solid);
+}
+
+.settings-card.list-card {
+    height: *;
+    display: flex;
+    flex-direction: column;
+    min-height: 40px;
+    overflow: hidden;
+}
+
+.footer-row {
+    width: 100%;
+    flex-shrink: 0;
+}
+
+.footer-row .btn-action {
+    font-size: 11px;
+    padding: 6px 4px;
+}
+
+/* List Header */
+.list-header {
+    display: flex;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-medium);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.list-col-key {
+    width: 60px;
+    flex-shrink: 0;
+    text-align: center;
+}
+
+.list-col-action {
+    flex: 1;
+    padding-left: 10px;
+}
+
+/* Keymap List */
+.keymap-list {
+    display: block;
+    height: *;
+    min-height: 40px;
+    overflow-y: scroll-indicator;
+    overflow-x: hidden;
+    vertical-scrollbar: pink-scroll-indicator;
+    padding-right: 10px;
+}
+
+.keymap-item {
+    display: flex;
+    padding: 8px 0;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    border-bottom: 1px solid var(--border-row-light);
+    align-items: center;
+}
+
+.keymap-item:hover {
+    background: var(--bg-primary-hover);
+}
+
+.keymap-item.selected {
+    background: var(--color-primary-medium);
+}
+
+.keymap-item-key {
+    width: 60px;
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.keymap-item-action {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding-left: 10px;
+}
+
+.template-card {
+    padding: 8px 16px !important;
+}

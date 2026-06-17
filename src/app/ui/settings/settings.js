@@ -1,12 +1,12 @@
-// NexusKey Settings JavaScript
+// VKey Settings JavaScript
 // Handles div-based toggles with hidden inputs for VALUE_CHANGED events
 
 document.on("ready", function () {
     // Enable blur-behind effect (Sciter built-in)
-    // "dark" = dark tint, "source-auto" = automatic blur source
+    // Tint must match the current theme: "dark" or "light", plus "source-auto"
     requestAnimationFrame(function() {
         if (!document.body.classList.contains("win10")) {
-            Window.this.blurBehind = "dark source-auto";
+            Window.this.blurBehind = (document.body.classList.contains("dark") ? "dark" : "light") + " source-auto";
         } else {
             Window.this.blurBehind = "none";
         }
@@ -193,6 +193,17 @@ function initializeToggles() {
     if (spellToggle) {
         updateSpellCheckChildren(spellToggle.classList.contains("checked"));
     }
+
+    // Initial state: sync userdefined button
+    updateUserDefinedButton();
+}
+
+function updateUserDefinedButton() {
+    var select = document.getElementById("input-type");
+    var btn = document.getElementById("btn-userdefined");
+    if (select && btn) {
+        btn.style.display = (select.value == "4") ? "inline-block" : "none";
+    }
 }
 
 // Enable/disable spell check child options based on parent state
@@ -340,6 +351,10 @@ document.on("change", "select", function (evt, select) {
     // Update tooltip to show only the selected item text
     var selected = select.querySelector("option:checked");
     if (selected) select.setAttribute("title", selected.textContent);
+
+    if (id === "input-type") {
+        updateUserDefinedButton();
+    }
 });
 
 // Handle text input changes - display "Space" for space character

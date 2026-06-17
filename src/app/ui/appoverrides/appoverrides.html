@@ -57,19 +57,32 @@
                 <div class="setting-row">
                     <span class="setting-label" data-i18n="ao.input_method">Kiểu gõ</span>
                     <select class="setting-select" id="input-method">
+                        <option value="-1">Mặc định</option>
                         <option value="0">Telex</option>
                         <option value="1">VNI</option>
                         <option value="2">Simple Telex</option>
+                        <option value="3">Telex + VNI</option>
                     </select>
                 </div>
                 <div class="setting-row">
                     <span class="setting-label" data-i18n="ao.encoding">Bảng mã</span>
                     <select class="setting-select" id="encoding-override">
+                        <option value="-1">Mặc định</option>
                         <option value="0">Unicode</option>
                         <option value="1">TCVN3</option>
                         <option value="2">VNI Windows</option>
                         <option value="3">Unicode hợp thành</option>
                         <option value="4">Vietnamese Locale</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <span class="setting-label" data-i18n="ao.send_method">Kiểu gửi</span>
+                    <select class="setting-select" id="send-method">
+                        <option value="-1">Mặc định</option>
+                        <option value="1">Clipboard</option>
+                        <option value="2">Tương thích Firefox</option>
+                        <option value="3">Tương thích Cloud/Remote</option>
+                        <option value="4">Thay thế trực tiếp (EM_REPLACESEL)</option>
                     </select>
                 </div>
                 <div class="button-row">
@@ -85,6 +98,7 @@
                     <span class="list-col-name" data-i18n="ao.list_app">Ứng dụng</span>
                     <span class="list-col-inputmethod" data-i18n="ao.list_method">Kiểu gõ</span>
                     <span class="list-col-encoding" data-i18n="ao.list_encoding">Bảng mã</span>
+                    <span class="list-col-sendmethod" data-i18n="ao.list_sendmethod">Kiểu gửi</span>
                     <span class="list-col-action"></span>
                 </div>
                 <div class="app-list" id="app-list">
@@ -98,6 +112,7 @@
         <input type="hidden" id="val-app-name" value="">
         <input type="hidden" id="val-input-method" value="0">
         <input type="hidden" id="val-encoding-override" value="0">
+        <input type="hidden" id="val-send-method" value="-1">
     </div>
 </body>
 

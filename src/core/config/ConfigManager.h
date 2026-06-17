@@ -1,5 +1,5 @@
-// NexusKey - Configuration Manager
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Configuration Manager
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -10,13 +10,15 @@
 #include "TypingConfig.h"
 #include "core/UIConfig.h"
 #include "core/SystemConfig.h"
+#include "core/hotkey/HotkeyRegistry.h"
 
 namespace NextKey {
 
 /// Per-app override settings (encoding + input method)
 struct AppOverrideEntry {
-    int8_t inputMethod = -1;       // -1=inherit global, 0=Telex, 1=VNI, 2=SimpleTelex
+    int8_t inputMethod = -1;       // -1=inherit global, 0=Telex, 1=VNI, 2=SimpleTelex, 3=Combined, 4=UserDefined
     int8_t encodingOverride = -1;  // -1=inherit global, 0-4=CodeTable value
+    int8_t sendMethod = -1;        // -1=inherit, 0=SendInput, 1=Clipboard
 };
 
 /// Manages loading and saving of configuration from TOML file
@@ -55,19 +57,59 @@ public:
     /// Load hotkey config with automatic path resolution
     [[nodiscard]] static HotkeyConfig LoadHotkeyConfigOrDefault();
 
+    /// Load unified hotkey registry (`[[hotkeys]]` TOML array) — covers
+    /// cancel-composition / skip-macro / toggle-enabled triggers. Returns
+    /// nullopt if file unreadable, fresh-defaults if section missing.
+    [[nodiscard]] static std::optional<HotkeyRegistry>
+    LoadHotkeyRegistry(const std::wstring& path);
+
+    /// Persist unified hotkey registry to `[[hotkeys]]` array (merges file).
+    [[nodiscard]] static bool
+    SaveHotkeyRegistry(const std::wstring& path, const HotkeyRegistry& registry);
+
+    /// Load registry with automatic path resolution. Returns Defaults() on
+    /// any read failure (file missing, parse error, IO error).
+    [[nodiscard]] static HotkeyRegistry LoadHotkeyRegistryOrDefault();
+
+    /// One-shot migration: if `[[hotkeys]]` is missing or empty, read pre-v3
+    /// `[features]` toggles (esc_restore_raw / temp_off_macro_esc /
+    /// temp_off_method) directly from TOML, build a registry from them, and
+    /// persist it. Returns the registry that should now be used.
+    ///
+    /// Idempotent — if `[hotkey_state]` is already present (sentinel for "v3
+    /// UI touched this file"), returns the stored registry without rewriting.
+    /// Safe to call on every Start/ReloadFromToml.
+    [[nodiscard]] static HotkeyRegistry MigrateLegacyHotkeysIfNeeded(const std::wstring& path);
+
     /// Load all excluded apps (merges [excluded_apps].list + .soft for backward compat)
     [[nodiscard]] static std::vector<std::wstring> LoadAllExcludedApps(const std::wstring& path);
 
-    /// Save excluded apps list to config
+    /// Save excluded apps list to config ([excluded_apps].list — hard-E).
+    /// Preserves the sibling [excluded_apps].force_vn array.
     [[nodiscard]] static bool SaveExcludedApps(const std::wstring& path,
                                                 const std::vector<std::wstring>& apps);
 
-    /// Load persisted English-mode apps for smart switch (survives restart)
-    [[nodiscard]] static std::vector<std::wstring> LoadEnglishModeApps(const std::wstring& path);
+    /// Load apps locked to Vietnamese ([excluded_apps].force_vn — hard-V).
+    [[nodiscard]] static std::vector<std::wstring> LoadForcedVnApps(const std::wstring& path);
 
-    /// Save English-mode apps for smart switch (merges with existing config)
-    [[nodiscard]] static bool SaveEnglishModeApps(const std::wstring& path,
-                                                   const std::vector<std::wstring>& apps);
+    /// Save the hard-V app list to [excluded_apps].force_vn.
+    /// Preserves the sibling [excluded_apps].list (hard-E) array.
+    [[nodiscard]] static bool SaveForcedVnApps(const std::wstring& path,
+                                                const std::vector<std::wstring>& apps);
+
+    /// Load V2 schema `[smart_switch.apps]` table (lowercase exe → isVietnamese).
+    /// Falls back to legacy `[smart_switch].english_mode_apps` array if V2
+    /// is absent (one-time silent migration). Returns empty map on parse
+    /// error or missing file. Unknown mode strings are skipped + logged.
+    /// Cap at kMaxSmartSwitchEntries entries.
+    [[nodiscard]] static std::unordered_map<std::wstring, bool>
+        LoadSmartSwitchApps(const std::wstring& path);
+
+    /// Save the full V2 schema. Keys sorted alphabetically (clean diffs).
+    /// Existing other TOML sections preserved. Acquires ConfigFileLock.
+    [[nodiscard]] static bool SaveSmartSwitchApps(
+        const std::wstring& path,
+        const std::unordered_map<std::wstring, bool>& apps);
 
     /// Load TSF apps list from config (apps that use TSF engine instead of hook)
     [[nodiscard]] static std::vector<std::wstring> LoadTsfApps(const std::wstring& path);
@@ -104,13 +146,28 @@ public:
     [[nodiscard]] static std::unordered_map<std::wstring, AppOverrideEntry> LoadAppOverrides(const std::wstring& path);
 
     /// Save per-app override entries
-    [[nodiscard]] static bool SaveAppOverrides(const std::wstring& path,
+    static bool SaveAppOverrides(const std::wstring& path,
                                                 const std::unordered_map<std::wstring, AppOverrideEntry>& entries);
+
+    /// Import custom keymap from a standalone .keymap (TOML) file
+    [[nodiscard]] static bool ImportCustomKeyMap(const std::wstring& path, TypingConfig& config);
+
+    /// Export custom keymap to a standalone .keymap (TOML) file
+    [[nodiscard]] static bool ExportCustomKeyMap(const std::wstring& path, const TypingConfig& config);
+
+    /// `%APPDATA%\VKey` (creates the directory if missing). Falls back to "."
+    /// when SHGetFolderPathW fails. Public because runtime callers (HookEngine
+    /// perf-histogram log path, logger fallback, etc.) need the same well-known
+    /// per-user data root as the TOML config path.
+    static std::wstring GetAppDataDirectory();
 
 private:
     static std::wstring GetExeDirectory();
-    static std::wstring GetAppDataDirectory();
     static bool DirectoryWritable(const std::wstring& path);
+
+    // User-defined keymap helpers
+    static void LoadCustomKeyMap(const void* table_ptr, TypingConfig& config);
+    static void SaveCustomKeyMap(void* table_ptr, const TypingConfig& config);
 };
 
 }  // namespace NextKey

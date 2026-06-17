@@ -1,5 +1,5 @@
-// NexusKey Classic — App Overrides Dialog
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey Classic — App Overrides Dialog
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -36,7 +36,7 @@ private:
     int Dpi(int value) const noexcept;
 
     static constexpr int kWidth = 490;
-    static constexpr int kHeight = 295;
+    static constexpr int kHeight = 330;
     static constexpr int kPadding = 12;
     static constexpr int kBtnHeight = 28;
     static constexpr int kBtnGap = 6;
@@ -51,6 +51,7 @@ private:
     HWND comboApp_ = nullptr;
     HWND comboMethod_ = nullptr;
     HWND comboEncoding_ = nullptr;
+    HWND comboSendMethod_ = nullptr;
     HWND btnAdd_ = nullptr;
     HWND btnPick_ = nullptr;
     HWND btnDelete_ = nullptr;
@@ -58,7 +59,7 @@ private:
     std::unordered_map<std::wstring, AppOverrideEntry> entries_;
     WindowPicker picker_;
 
-    static constexpr const wchar_t* kClassName = L"NexusKeyAppOverrides";
+    static constexpr const wchar_t* kClassName = L"VKeyAppOverrides";
 };
 
 }  // namespace NextKey::Classic

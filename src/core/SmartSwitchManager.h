@@ -1,5 +1,5 @@
-// NexusKey - Smart Switch Shared Memory Manager
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - Smart Switch Shared Memory Manager
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #pragma once
 
@@ -12,7 +12,7 @@
 namespace NextKey {
 
 /// Manages shared memory for per-app Vietnamese/English mode tracking.
-/// Uses "Local\\NexusKeySmartSwitch" named shared memory.
+/// Uses "Local\\VKeySmartSwitch" named shared memory.
 class SmartSwitchManager {
 public:
     SmartSwitchManager();

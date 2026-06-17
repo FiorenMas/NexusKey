@@ -1,5 +1,5 @@
-// NexusKey - EngineFactory Tests
-// SPDX-License-Identifier: GPL-3.0-only
+// VKey - EngineFactory Tests
+// SPDX-License-Identifier: AGPL-3.0-only
 
 #include <gtest/gtest.h>
 #include "core/engine/EngineFactory.h"
