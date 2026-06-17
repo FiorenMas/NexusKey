@@ -104,8 +104,9 @@ VKey cung cấp nhiều phương thức gõ linh hoạt để đáp ứng mọi 
 - Nếu bật tính năng này, nhấn `Backspace` sẽ chỉ ẩn/tắt hộp gợi ý đi mà vẫn giữ nguyên chữ bạn đã gõ. *📌 Lưu ý:* Tính năng này đôi khi có thể gây lỗi hiển thị ký tự gõ tiếp theo trên một số trình duyệt.
 
 ### <span id="spellcheck">📝 9. Các tính năng kiểm tra chính tả</span>
-- ✅ **Khôi phục từ với phím sai:** Khi bạn gõ sai chính tả tiếng Việt và nhấn phím `Space`, VKey sẽ tự động hoàn trả lại đúng các ký tự gốc đã nhập. Ví dụ: gõ nhầm `pềct` + `Space` → tự động khôi phục lại thành `perfect`.
-- ✅ **Loại trừ chính tả:** Cho phép bạn thêm các từ đặc biệt, viết tắt hoặc thuật ngữ chuyên ngành vào danh sách loại trừ để bộ gõ không nhận nhầm là lỗi chính tả, giúp quá trình gõ chữ trơn tru hơn.
+- ✅ **Khôi phục từ với phím sai:** *(Mặc định: Bật)* Khi bạn gõ sai chính tả tiếng Việt và nhấn phím `Space`, VKey sẽ tự động hoàn trả lại đúng các ký tự gốc đã nhập. Ví dụ: gõ nhầm `pềct` + `Space` → tự động khôi phục lại thành `perfect`.
+- ✅ **Quy tắc `đ` ở ký tự đầu (dd ↔ đ):** Khi chữ `đ` đứng ở **ký tự đầu**, gõ thêm `d` sẽ **chuyển đổi qua lại** một cách nhất quán: `d` → `đ`, rồi `đ` → `d`. Ví dụ: gõ `dm` rồi thêm `d` → `đm`; thêm `d` lần nữa → `dmd`. Nhờ vậy chữ `đ` đầu từ không bao giờ bị "kẹt" — bạn luôn quay lại được `d` gốc. *(Lưu ý: quy tắc này chỉ áp dụng cho `đ` ở ký tự đầu; các chữ `đ` ở giữa từ như trong `hđlđ` không bị ảnh hưởng.)*
+- ✅ **Loại trừ chính tả:** Cho phép bạn thêm các từ đặc biệt, viết tắt hoặc thuật ngữ chuyên ngành vào danh sách loại trừ để bộ gõ không nhận nhầm là lỗi chính tả, giúp quá trình gõ chữ trơn tru hơn. 👉 Đây cũng là cách giữ nguyên các từ viết tắt **bắt đầu bằng `đ` và có nhiều `đ` gõ liền nhau** (ví dụ `đcđt`): chỉ cần thêm từ đó vào danh sách loại trừ, VKey sẽ giữ chữ `đ` đầu thay vì tự chuyển về `d` theo quy tắc ở trên.
 
 ### <span id="hotkey-mgmt">⚡ 10. Quản lý phím tắt</span>
 - 🔸 **Khôi phục từ gốc chủ động:** Cho phép thiết lập phím tắt để ngay lập tức trả lại các ký tự gốc (raw keys) mà không cần nhấn phím cách (`Space`) hoặc đợi gõ hết từ. Ví dụ: gõ `asus` → hiển thị thành `aus` → nhấn `ESC` → lập tức khôi phục lại thành `asus`.

@@ -289,23 +289,23 @@ template<typename CharStateT>
 /// Decide whether a stroke-D escape (Đ → d) should fire at the given target.
 /// Two allowed cases:
 ///   (a) Trailing Đ (ddd → dd, vddd → vdd): user double-tapped to undo.
-///   (b) Leading Đ at index 0 with a vowel between it and the new d
-///       (ddocd → docd): Vietnamese never has coda 'd', so trailing d after
-///       a Đ-headed syllable is a recovery signal for mis-typed dd at start.
-///       Vowel guard preserves abbreviation chains: ddxd → đxd keeps Đ
-///       because no vowel sits between it and the trailing d.
-/// Intermediate Đ (e.g. HĐL+d for HĐLĐ, vđx+d) returns false — Đ belongs to
-/// a prior committed segment; the new d is a fresh literal so the NEXT dd
-/// can compose a new Đ.
+///   (b) Leading Đ at index 0 (issue #200 toggle): a new d toggles the
+///       FIRST char back to d, mirroring "d→đ on the first char" in reverse.
+///       Examples: đm + d → dmd, đoc + d → docd. This fires regardless of
+///       what sits between Đ and the new d — there is NO vowel guard.
+///       Trade-off (accepted by maintainer): Đ-initial abbreviation chains
+///       typed as one token (e.g. ddxd, ddcddt) lose the leading Đ. Such
+///       all-consonant Đ-initial tokens are not real Vietnamese words; users
+///       who need them type the syllable, then space → backspace.
+/// Intermediate Đ (e.g. HĐL+d for HĐLĐ) returns false — Đ belongs to a prior
+/// segment; the new d is a fresh literal so the NEXT dd composes a new Đ.
 template<typename CharStateT>
 [[nodiscard]] inline bool IsStrokeDEscapeAllowed(
-        const CharStateT* states, size_t count, size_t dIdx) noexcept {
+        const CharStateT* /*states*/, size_t count, size_t dIdx) noexcept {
+    // Trailing Đ (ddd→dd) or leading Đ@0 (issue #200 first-char toggle).
+    // `states` is unused now that the leading case has no vowel guard.
     if (count > 0 && dIdx == count - 1) return true;
-    if (dIdx == 0 && count >= 2) {
-        for (size_t i = 1; i < count; ++i) {
-            if (states[i].IsVowel()) return true;
-        }
-    }
+    if (dIdx == 0 && count >= 2) return true;
     return false;
 }
 

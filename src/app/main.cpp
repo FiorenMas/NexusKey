@@ -273,6 +273,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
     // Ensure only one background instance of VKey runs at a time.
     // We check this AFTER subprocess routing so settings/macro dialogs
     // can spawn freely, but a second background process cannot.
+    // The mutex name is SHARED with the Classic/Lite build (main_lite.cpp) on
+    // purpose: the Sciter and Classic editions are mutually exclusive — running
+    // one blocks the other. Do NOT rename this without updating main_lite.cpp.
     // NOTE: Use default DACL (nullptr). MakeCreatorOnlySecurityAttributes() uses
     // CO (Creator Owner) SID which does NOT resolve for non-container objects like
     // mutexes — second instance gets ERROR_ACCESS_DENIED instead of ERROR_ALREADY_EXISTS.

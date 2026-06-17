@@ -775,6 +775,16 @@
                                 <input type="hidden" id="val-check-update" value="0">
                             </div>
                         </div>
+                        <!-- Sponsor Section - Separate Card -->
+                        <div class="update-card" style="margin-top: 8px;">
+                            <div class="setting-row" style="flow: horizontal; align-items: center; border-spacing: 8px; padding: 0;">
+                                <img src="../shared/signpath.png" style="width: 18px; height: 18px; vertical-align: middle; cursor: pointer;" data-url="https://signpath.org/" alt="SignPath" />
+                                <span style="font-size: 11px; color: var(--text-light); vertical-align: middle; line-height: 1.35;">
+                                    <span data-i18n="s.sponsor_p1">Dịch vụ ký số trên Windows miễn phí bởi</span> <a href="#" data-url="https://signpath.io/">SignPath.io</a>, <span data-i18n="s.sponsor_p2">chứng chỉ bởi</span> <a href="#" data-url="https://signpath.org/">SignPath Foundation</a>
+                                </span>
+                            </div>
+                        </div>
+
                         <!-- Report Issue Section - Separate Card -->
                         <div class="update-card" style="margin-top: 8px;">
                             <div class="setting-row">
@@ -792,6 +802,17 @@
         <!-- Hidden inputs for C++ events -->
         <input type="hidden" id="val-expand-state" value="0">
         <input type="hidden" id="val-tab-change" value="1">
+
+    <script type="module">
+        import * as env from "@env";
+        document.on("click", "[data-url]", function(evt, el) {
+            var url = el.getAttribute("data-url");
+            if (url) {
+                try { env.launch(url); } catch (e) {}
+            }
+            return true;
+        });
+    </script>
 </body>
 
 </html>

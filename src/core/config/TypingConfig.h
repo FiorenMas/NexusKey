@@ -82,7 +82,7 @@ struct HotkeyConfig {
 struct TypingConfig {
     InputMethod inputMethod = InputMethod::Telex;
     CodeTable codeTable = CodeTable::Unicode;
-    bool spellCheckEnabled = false;
+    bool spellCheckEnabled = true;
     bool beepOnSwitch = false;
     bool smartSwitch = false;
     bool excludeApps = false;  // Exclude apps feature toggle
@@ -91,7 +91,7 @@ struct TypingConfig {
     bool modernOrtho = true;   // Modern tone placement (oà, uý)
     bool autoCaps = false;      // Auto-capitalize first letter of sentence
     bool allowZwjf = false;     // z/w/j/f act as tone/modifier keys (normal Vietnamese)
-    bool autoRestoreEnabled = false;  // Restore raw keys when word is invalid
+    bool autoRestoreEnabled = true;   // Restore raw keys when word is invalid
     bool cjkAutoSwitch = false;       // Auto-suppress V mode while a CJK keyboard layout is active (opt-in)
     bool macroEnabled = false;         // Allow macro/shorthand expansion
     bool macroInEnglish = false;       // Allow macros even when Vietnamese mode is off

@@ -224,7 +224,8 @@ static void OnMenuCommand(TrayMenuId id) {
             MessageBoxW(nullptr,
                 L"VKey Classic\n"
                 L"Vietnamese Input Method Editor\n\n"
-                L"https://github.com/phatMT97/VKey",
+                L"https://github.com/phatMT97/VKey\n\n"
+                L"Dịch vụ ký số trên Windows được cung cấp miễn phí bởi SignPath.io, chứng chỉ bởi SignPath Foundation.",
                 L"VKey", MB_ICONINFORMATION);
             break;
 
@@ -393,21 +394,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int) {
 
     // ── Single instance check ──
 
+    // Shared mutex name with the Sciter build (main.cpp) so the Classic and
+    // Sciter editions are mutually exclusive — only ONE VKey of EITHER edition
+    // may run at a time (both register the same "VKeyTrayClass" tray window, so
+    // the existing-instance popup below still targets whichever is running).
     // NOTE: Use default DACL (nullptr). CO SID doesn't resolve for non-container objects.
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\VKeyLite_Main_Mutex");
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\VKey_Main_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (isAdminRestart) {
             // See main.cpp for rationale — wait for old instance to release.
             DWORD r = WaitForSingleObject(hMutex, 10000);
             if (r != WAIT_OBJECT_0 && r != WAIT_ABANDONED) {
-                NEXTKEY_LOG(L"Admin-restart: timeout waiting for old Lite mutex (r=%lu)", r);
+                NEXTKEY_LOG(L"Admin-restart: timeout waiting for old mutex (r=%lu)", r);
                 CloseHandle(hMutex);
                 return 1;
             }
-            NEXTKEY_LOG(L"Admin-restart: Lite mutex ownership acquired (%s)",
+            NEXTKEY_LOG(L"Admin-restart: mutex ownership acquired (%s)",
                          r == WAIT_ABANDONED ? L"abandoned" : L"released");
         } else {
-            NEXTKEY_LOG(L"Another Lite instance is already running. Exiting.");
+            // Another VKey (Classic or Sciter) is already running. Surface the
+            // running instance's settings if "show on startup" is configured,
+            // then exit silently — mirrors main.cpp.
+            auto sysCfg = ConfigManager::LoadSystemConfigOrDefault();
+            if (sysCfg.showOnStartup) {
+                HWND existingTrayWnd = FindWindowW(L"VKeyTrayClass", nullptr);
+                if (existingTrayWnd) {
+                    PostMessageW(existingTrayWnd, WM_VKEY_SHOW_SETTINGS, 0, 0);
+                }
+            }
+            NEXTKEY_LOG(L"Another VKey instance is already running. Exiting.");
             CloseHandle(hMutex);
             return 0;
         }

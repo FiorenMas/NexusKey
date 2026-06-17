@@ -255,7 +255,7 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
 
         // [features] section — use node_view [] operator for safe access to optional keys
         if (auto features = table["features"].as_table()) {
-            config.spellCheckEnabled = (*features)["spell_check"].value_or(false);
+            config.spellCheckEnabled = (*features)["spell_check"].value_or(true);
             config.beepOnSwitch = (*features)["beep_on_switch"].value_or(false);
             config.smartSwitch = (*features)["smart_switch"].value_or(false);
             config.excludeApps = (*features)["exclude_apps"].value_or(false);
@@ -266,7 +266,7 @@ std::optional<TypingConfig> ConfigManager::LoadFromFile(const std::wstring& path
             config.modernOrtho = (*features)["modern_ortho"].value_or(true);
             config.autoCaps = (*features)["auto_caps"].value_or(false);
             config.allowZwjf = (*features)["allow_zwjf"].value_or(false);
-            config.autoRestoreEnabled = (*features)["auto_restore"].value_or(false);
+            config.autoRestoreEnabled = (*features)["auto_restore"].value_or(true);
             // Default false: opt-in. Most users don't have CJK layouts active.
             config.cjkAutoSwitch = (*features)["cjk_auto_switch"].value_or(false);
             // v3 cleanup: `temp_off_method` / `temp_off_macro_esc` no longer
@@ -524,7 +524,13 @@ std::optional<HotkeyConfig> ConfigManager::LoadHotkeyConfig(const std::wstring& 
         std::string utf8Path = WideToUtf8(path);
         auto table = ParseTomlCached(utf8Path);
 
+        // Default E-V switch = Ctrl+Shift (UniKey-style). Applies both when the
+        // [hotkey] table is absent and when ctrl/shift keys are missing inside it
+        // (value_or(true) below). An explicit `ctrl=false`/`shift=false` on disk
+        // still wins — clearing the switch remains possible.
         HotkeyConfig config;
+        config.ctrl  = true;
+        config.shift = true;
 
         if (auto hotkey = table["hotkey"].as_table()) {
             config.ctrl  = (*hotkey)["ctrl"].value_or(true);
@@ -580,11 +586,13 @@ HotkeyConfig ConfigManager::LoadHotkeyConfigOrDefault() {
     if (config) {
         return *config;
     }
-    // No config file → empty binding (all flags false, vk=0). The
-    // "Ctrl+Shift default" only kicks in when the file exists but the
-    // ctrl/shift fields are missing inside [hotkey] (see value_or(true)
-    // calls above). User must configure on fresh install.
-    return HotkeyConfig{};
+    // No config file → default E-V switch = Ctrl+Shift (UniKey-style), matching
+    // the in-file default in LoadHotkeyConfig. vk=0 means modifier-combo, no main
+    // key — HotkeyManager registers it as a Ctrl+Shift gesture.
+    HotkeyConfig defaults;
+    defaults.ctrl  = true;
+    defaults.shift = true;
+    return defaults;
 }
 
 // ─────────────────────────── Unified HotkeyRegistry ──────────────────────

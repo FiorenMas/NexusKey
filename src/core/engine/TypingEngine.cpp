@@ -1335,6 +1335,15 @@ bool TypingEngine::HandleStrokeD(TypingAction /*action*/, wchar_t c) {
         return true;
     } else if (target.mod == Modifier::Stroke) {
         if (!IsStrokeDEscapeAllowed(states_.data(), states_.size(), dIdx)) return false;
+        // Spell-exclusion escape hatch (issue #200): the leading-Đ@0 toggle-back
+        // would clobber Đ-initial chains the user explicitly allowed (e.g. đcđt
+        // typed as ddcddt). If keeping Đ still matches an exclusion prefix, treat
+        // this d as a fresh literal so the chain can finish building the excluded
+        // word instead of un-stroking the leading Đ.
+        if (dIdx == 0 && !config_.spellExclusions.empty() &&
+            WouldModifierKeyMatchExclusion(towlower(c))) {
+            return false;
+        }
         target.mod = Modifier::None;
         escape_.escape(EscapeKind::Stroke);
         ProcessChar(c);

@@ -4067,6 +4067,32 @@ TEST_F(SpellExclusionTest, SecondExclusion_Works) {
     EXPECT_EQ(engine_->Commit(), L"đp");
 }
 
+// issue #200: a Đ-initial chain the first-char toggle would otherwise clobber
+// (ddcddt → dcđt) is recoverable by adding the word to spell exclusions. The
+// leading-Đ un-stroke is skipped while the buffer still prefix-matches "đcđt".
+TEST_F(SpellExclusionTest, LeadingDdChain_PreservedByExclusion) {
+    TypingConfig cfg;
+    cfg.inputMethod = InputMethod::Telex;
+    cfg.spellCheckEnabled = true;
+    cfg.autoRestoreEnabled = true;
+    cfg.spellExclusions = {L"đcđt"};
+    TypingEngine eng(cfg);
+    TypeString(eng, L"ddcddt");
+    EXPECT_EQ(eng.Peek(), L"đcđt");
+}
+
+TEST_F(SpellExclusionTest, LeadingDdToggle_StillTogglesWhenNotExcluded) {
+    // With an unrelated exclusion present, "dmdd" still toggles normally → dmd.
+    TypingConfig cfg;
+    cfg.inputMethod = InputMethod::Telex;
+    cfg.spellCheckEnabled = true;
+    cfg.autoRestoreEnabled = true;
+    cfg.spellExclusions = {L"đcđt"};
+    TypingEngine eng(cfg);
+    TypeString(eng, L"dmdd");
+    EXPECT_EQ(eng.Peek(), L"dmd");
+}
+
 TEST_F(SpellExclusionTest, EmptyExclusionList_NormalBehavior) {
     // No exclusions → dd→đ bypass fires (d after consonant), HasIntentionalStrokeD
     // keeps "hđ" at commit time (no plain vowels after đ → abbreviation heuristic)
@@ -4340,11 +4366,13 @@ TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDdEscape_ddocd) {
     EXPECT_EQ(engine_->Peek(), L"docd");  // User then BS once → "doc"
 }
 
-// Sanity: abbreviation chain — no vowel between leading Đ and trailing d
-// (ddxd) must keep Đ; the trailing d is a fresh literal.
+// issue #200: leading Đ now toggles back unconditionally (no vowel guard).
+// d-d-x-d → "dxd": dd→đ, x, then d un-strokes the leading đ and re-emits d.
+// (Đ-initial all-consonant tokens like đxđ are not real Vietnamese words;
+// trade-off accepted by maintainer in favor of consistent first-char toggle.)
 TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDdEscape_NoVowel_ddxd) {
     TypeString(*engine_, L"ddxd");
-    EXPECT_EQ(engine_->Peek(), L"đxd");
+    EXPECT_EQ(engine_->Peek(), L"dxd");
 }
 
 // Sanity: longer recovery — "ddong" + d → "dongd" (lose đ, gain trailing d).
@@ -4409,11 +4437,36 @@ TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_AbbreviationChain_vddtdd) {
     EXPECT_EQ(engine_->Peek(), L"vđtđ");
 }
 
-TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_NoEscape_AcrossIntervening_ddxd) {
-    // d-d-x-d → đxd: the standalone d after Đ+x must NOT escape Đ (which would
-    // have produced "dxd"). Đ belongs to the prior segment.
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_LeadingDd_AcrossIntervening_ddxd) {
+    // issue #200: leading Đ@0 escapes across an intervening consonant.
+    // d-d-x-d → dxd (was đxd before the first-char toggle change).
     TypeString(*engine_, L"ddxd");
-    EXPECT_EQ(engine_->Peek(), L"đxd");
+    EXPECT_EQ(engine_->Peek(), L"dxd");
+}
+
+// issue #200: dd→đ toggles the FIRST char consistently. A new d strokes the
+// leading d (d→đ); the NEXT d un-strokes it (đ→d) and re-emits the literal d.
+// Old bug: the un-stroke step didn't fire, leaving a stuck đ ("đmd").
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_FirstCharToggle_dmdd) {
+    // d-m-d-d: dm → (3rd d strokes leading d) → đm → (4th d un-strokes) → dmd.
+    TypeString(*engine_, L"dmdd");
+    EXPECT_EQ(engine_->Peek(), L"dmd");
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_FirstCharToggle_Incremental) {
+    // Same typed incrementally — the đm intermediate is intended.
+    TypeString(*engine_, L"dm");
+    EXPECT_EQ(engine_->Peek(), L"dm");
+    TypeString(*engine_, L"d");
+    EXPECT_EQ(engine_->Peek(), L"đm");      // leading d strokes to đ
+    TypeString(*engine_, L"d");
+    EXPECT_EQ(engine_->Peek(), L"dmd");     // leading đ un-strokes, d re-emitted
+}
+
+TEST_F(EnglishDetectionNoSpellCheckTest, DModifier_FirstCharToggle_ddmd) {
+    // d-d-m-d: dd → đ, then m → đm, then d un-strokes leading đ → dmd.
+    TypeString(*engine_, L"ddmd");
+    EXPECT_EQ(engine_->Peek(), L"dmd");
 }
 
 TEST_F(EnglishDetectionNoSpellCheckTest, WModifier_EscapeUndosBothHorns) {

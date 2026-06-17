@@ -404,3 +404,14 @@ body.win10 .container {
 body.dark.win10 .container {
     border: 1px solid rgba(0, 0, 0, 0.6); /* Pure dark border, completely eliminating 'white ring' */
 }
+
+/* Anchor/Link styling with dynamic colors for Light/Dark themes */
+a {
+    color: var(--color-primary);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+a:hover {
+    color: var(--color-primary-hover);
+}

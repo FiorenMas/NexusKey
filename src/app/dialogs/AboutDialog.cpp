@@ -9,7 +9,7 @@ AboutDialog::AboutDialog(HWND parent)
     : SciterSubDialog({
         L"this://app/about/about.html",
         L"VKey - About",
-        300, 340, parent, true, 36, 40, true
+        330, 430, parent, true, 36, 40, true
     }) {
 }
 

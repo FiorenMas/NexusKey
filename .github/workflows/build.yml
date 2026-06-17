@@ -14,6 +14,10 @@ on:
         description: 'Include Classic UI (Lite) build'
         type: boolean
         default: false
+      sign_binaries:
+        description: 'Sign binaries via SignPath (test-signing). Uncheck to use unsigned build output.'
+        type: boolean
+        default: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -118,8 +122,13 @@ jobs:
         uses: actions/checkout@v4
 
       # --- SignPath Code Signing ---
+      # Tag pushes always sign (release-signing). Manual runs sign with
+      # test-signing only when the `sign_binaries` input is checked; otherwise
+      # the unsigned build output is downloaded into signed-binaries/ instead so
+      # the steps below are identical regardless of whether signing ran.
       - name: Submit signing request to SignPath
         id: signpath-sign
+        if: startsWith(github.ref, 'refs/tags/') || inputs.sign_binaries
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
@@ -129,6 +138,13 @@ jobs:
           github-artifact-id: '${{ needs.build.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'signed-binaries'
+
+      - name: Use unsigned binaries (signing skipped)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.sign_binaries }}
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-binaries
+          path: signed-binaries
 
       - name: Reconstruct release layout
         shell: powershell
@@ -145,8 +161,11 @@ jobs:
           if ("${{ needs.build.outputs.has-classic }}" -eq "true") {
             New-Item -ItemType Directory -Force -Path dist-classic
             Copy-Item "signed-binaries/VKeyClassic.exe" "dist-classic/" -Force
+            # VKeyTSF.dll is REQUIRED — RegisterTsf() does LoadLibrary("<exe-dir>\VKeyTSF.dll").
+            # Without it the Classic build cannot register TSF even when run elevated (issue #199).
+            Copy-Item "signed-binaries/VKeyTSF.dll" "dist-classic/" -Force
             Copy-Item "signed-binaries/VKeyWatchdog.exe" "dist-classic/" -Force
-            
+
             Copy-Item "signed-binaries/VKeyClassic.exe" "upload-payload/" -Force
           }
 
